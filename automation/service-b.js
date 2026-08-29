@@ -33,6 +33,28 @@ function normalizeToDatetime(value, isEnd) {
     return out;
 }
 
+// 设置 EasyUI 控件值。控件未初始化时直接调用会报
+// “cannot read properties of undefined (reading 'options')”，
+// 故自动重试直至成功（或超时后跳过并警告），避免整段流程崩溃
+async function setWidgetValue(page, selector, widget, method, value, log) {
+    for (let i = 0; i < 20; i++) {
+        const ok = await page.evaluate(({ selector, widget, method, value }) => {
+            try {
+                const el = document.querySelector(selector);
+                if (!el) return false;
+                $(selector)[widget](method, value);
+                return true;
+            } catch (e) {
+                return false; // 控件未就绪，稍后重试
+            }
+        }, { selector, widget, method, value }).catch(() => false);
+        if (ok) return true;
+        await new Promise(r => setTimeout(r, 500));
+    }
+    if (log) log(`警告: 设置 ${selector} 失败（控件未就绪），已跳过该条件`);
+    return false;
+}
+
 // 等待弹窗中的报警详情 iframe 加载到指定报警 id，并返回该 frame
 async function waitDetailFrame(page, alarmId) {
     const deadline = Date.now() + 20000;
@@ -49,47 +71,18 @@ class ServiceB {
         this.log = log;
     }
 
-    // 确保已登录并处于报警数据页；若未登录，等待用户在浏览器中手动登录
-    async ensureLoggedIn(page) {
-        // 进入报警数据页（未登录时会被重定向到登录页）
-        await page.goto(ALARM_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-        // 轮询等待页面稳定到“登录页(未登录)”或“报警页(已登录)”。
-        // 兼容客户端重定向：报警页可能先短暂渲染（doSearch 已定义）再跳转登录页，
-        // 因此检测到报警页后需复核 800ms 内是否稳定（防止误判为已登录而跳过登录）
-        let loggedIn = false;
-        for (let i = 0; i < 40; i++) {
-            const st = await page.evaluate(() => {
-                const u = document.querySelector('input.username');
-                const loginVisible = !!u && u.getBoundingClientRect().width > 0 && u.getBoundingClientRect().height > 0;
-                return { loginVisible, hasSearch: typeof window.doSearch === 'function' };
-            }).catch(() => ({ loginVisible: false, hasSearch: false }));
-            if (st.loginVisible) { loggedIn = false; break; }
-            if (st.hasSearch) {
-                await new Promise(r => setTimeout(r, 800)); // 复核是否即将跳转登录页
-                const re = await page.evaluate(() => {
-                    const u = document.querySelector('input.username');
-                    const loginVisible = !!u && u.getBoundingClientRect().width > 0 && u.getBoundingClientRect().height > 0;
-                    return { loginVisible, hasSearch: typeof window.doSearch === 'function' };
-                }).catch(() => ({ loginVisible: false, hasSearch: false }));
-                if (re.hasSearch && !re.loginVisible) { loggedIn = true; break; }
-            }
-            await new Promise(r => setTimeout(r, 500));
-        }
-        if (!loggedIn) {
-            // 未登录：先进入登录流程
-            this.log(`请在弹出的浏览器窗口中手动完成 ${SITE_NAME} 登录（含验证码），登录成功后自动继续...`);
-            await page.waitForFunction(isLoggedInInPage, { timeout: 600000 });
+    // 等待用户手动完成登录（登录成功后自动继续）
+    async waitForManualLogin(page) {
+        const loggedIn = await page.evaluate(isLoggedInInPage);
+        if (loggedIn) {
             this.log(`检测到 ${SITE_NAME} 已登录，继续`);
-            // 登录完成后重新进入报警数据页
-            await page.goto(ALARM_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-        } else {
-            this.log(`检测到 ${SITE_NAME} 已登录，继续`);
+            return;
         }
-        // 等待报警页脚本就绪
-        await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 20000 });
+        this.log(`请在弹出的浏览器窗口中手动完成 ${SITE_NAME} 登录（含验证码），登录成功后自动继续...`);
+        await page.waitForFunction(isLoggedInInPage, { timeout: 600000 });
     }
 
-    // 提取第 idx 行“查看照片”弹窗内的人脸截图 URL
+    // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL
     async collectRowPhotos(page, idx) {
         // 读取该行“查看照片”按钮中的报警 id
         const alarmId = await page.evaluate((i) => {
@@ -153,50 +146,44 @@ class ServiceB {
         if (!browserManager.browser) await browserManager.launch(false);
         const page = await browserManager.newPage();
 
-        // 打开报警数据页并确保已登录（未登录则等待用户手动登录后自动进入）
-        await this.ensureLoggedIn(page);
-
-        // 等待 EasyUI 筛选控件初始化完成：
-        // 首次打开时控件初始化晚于页面脚本（doSearch 已存在但控件未就绪），过早调用
-        // $('...').searchbox('setValue') 等会报 “cannot read properties of undefined (reading 'options')”
-        await page.waitForFunction(() => {
-            try {
-                const ready = (sel, key) => {
-                    const el = document.querySelector(sel);
-                    return !!el && !!$.data(el, key);
-                };
-                return ready('#ss', 'searchbox')
-                    && ready('#startTime', 'datetimebox')
-                    && ready('#endTime', 'datetimebox')
-                    && ready('#alarmtype', 'combotree')
-                    && ready('#alarmClassification', 'combobox')
-                    && ready('#repairStatus', 'combobox');
-            } catch (e) {
-                return false;
-            }
-        }, { timeout: 20000 }).catch(() => {
-            this.log('警告: 等待筛选控件初始化超时，尝试继续');
-        });
+        // 直接打开报警数据页；若未登录会自动跳转登录页，等待用户手动登录
+        await page.goto(ALARM_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+        await page.waitForFunction(() => typeof doSearch === 'function' || !!document.querySelector('input.username'), { timeout: 20000 }).catch(() => {});
+        await this.waitForManualLogin(page);
+        // 若刚完成登录（位于登录页），重新进入报警数据页
+        await page.goto(ALARM_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+        await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 20000 });
 
         // 规整起止时间（支持时分秒与粘贴），并设置筛选条件后查询第 1 页
         const startVal = normalizeToDatetime(startDate, false);
         const endVal = normalizeToDatetime(endDate, true);
         this.log(`${SITE_NAME}查询: ${plate}，${startVal || startDate} ~ ${endVal || endDate}`);
-        await page.evaluate(({ plate, startVal, endVal, filters }) => {
-            $('#ss').searchbox('setValue', plate);
-            if (startVal) $('#startTime').datetimebox('setValue', startVal);
-            if (endVal) $('#endTime').datetimebox('setValue', endVal);
-            if (filters.alarmTypes && filters.alarmTypes.length) {
-                $('#alarmtype').combotree('setValues', filters.alarmTypes);
-            }
-            if (filters.riskLevels && filters.riskLevels.length) {
-                $('#alarmClassification').combobox('setValues', filters.riskLevels);
-            }
-            if (filters.repairStatus && filters.repairStatus.length) {
-                $('#repairStatus').combobox('setValues', filters.repairStatus);
-            }
-            doSearch(1);
-        }, { plate, startVal, endVal, filters });
+        // 逐控件设置值（内部自动等待控件初始化并重试，避免 “reading 'options'” 报错）
+        await setWidgetValue(page, '#ss', 'searchbox', 'setValue', plate, this.log);
+        if (startVal) await setWidgetValue(page, '#startTime', 'datetimebox', 'setValue', startVal, this.log);
+        if (endVal) await setWidgetValue(page, '#endTime', 'datetimebox', 'setValue', endVal, this.log);
+        if (filters.alarmTypes && filters.alarmTypes.length) {
+            await setWidgetValue(page, '#alarmtype', 'combotree', 'setValues', filters.alarmTypes, this.log);
+        }
+        if (filters.riskLevels && filters.riskLevels.length) {
+            await setWidgetValue(page, '#alarmClassification', 'combobox', 'setValues', filters.riskLevels, this.log);
+        }
+        if (filters.repairStatus && filters.repairStatus.length) {
+            await setWidgetValue(page, '#repairStatus', 'combobox', 'setValues', filters.repairStatus, this.log);
+        }
+        // 触发查询（数据表格若未就绪 doSearch 内部也会抛同类错误，同样重试）
+        for (let i = 0; i < 20; i++) {
+            const ok = await page.evaluate(() => {
+                try {
+                    if (typeof doSearch === 'function') { doSearch(1); return true; }
+                    return false;
+                } catch (e) {
+                    return false;
+                }
+            }).catch(() => false);
+            if (ok) break;
+            await new Promise(r => setTimeout(r, 500));
+        }
         await new Promise(r => setTimeout(r, 3000));
 
         // 读取记录总数与每页条数，计算总页数
