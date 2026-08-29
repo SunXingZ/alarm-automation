@@ -6,6 +6,7 @@ const { isDriverScreenshot } = require('./driver-face-filter');
 const { downloadImage, compressToJpg } = require('./image-saver');
 const fs = require('fs-extra');
 const path = require('path');
+const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
     const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus } = options;
@@ -42,7 +43,8 @@ async function runAutomation(options = {}, log = console.log) {
         // 运输车辆监控平台：查询并下载截图（登录由用户手动完成，登录后自动继续）
         const serviceB = new ServiceB(log);
         const comparator = new FaceComparator();
-        const tmpDir = path.join(__dirname, '..', 'tmp_screenshots');
+        // 临时目录必须放可写位置（userData），打包后 __dirname 在只读 app.asar 内
+        const tmpDir = path.join(app.getPath('userData'), 'tmp_screenshots');
         fs.ensureDirSync(tmpDir);
         fs.ensureDirSync(outputDir);
 

@@ -1,9 +1,14 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const { app } = require('electron');
 
-// 持久化浏览器数据目录：保存登录态，之后运行无需重复登录
-const USER_DATA_DIR = path.join(__dirname, '..', '.chrome-profile');
+// 浏览器持久化数据目录：保存登录态，之后运行无需重复登录。
+// 必须放在可写目录（app.getPath('userData')）——打包后 __dirname 位于只读的
+// app.asar 内，不能把登录态写进 asar。
+function getUserDataDir() {
+    return path.join(app.getPath('userData'), 'chrome-profile');
+}
 
 // 系统 Chrome/Chromium 常见路径，作为 puppeteer 自带浏览器缺失时的兜底
 const CHROME_CANDIDATES = [
@@ -42,7 +47,7 @@ class BrowserManager {
             headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
             defaultViewport: { width: 1366, height: 768 },
-            userDataDir: USER_DATA_DIR
+            userDataDir: getUserDataDir()
         };
         // 优先使用系统浏览器路径（Chrome / Edge）
         if (executablePath) {

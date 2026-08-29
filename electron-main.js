@@ -62,21 +62,34 @@ ipcMain.handle('start-automation', async (event, payload) => {
     return result;
 });
 
-app.whenReady().then(createWindow);
+// 单实例锁：防止重复打开（如 Windows 双击两次）导致浏览器登录态目录被占用
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+    });
 
-app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        app.quit();
-    }
-});
+    app.whenReady().then(createWindow);
 
-// 退出应用时兜底关闭浏览器，避免 Chrome 残留
-app.on('before-quit', () => {
-    BrowserManager.close();
-});
+    app.on('window-all-closed', () => {
+        if (process.platform !== 'darwin') {
+            app.quit();
+        }
+    });
 
-app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-    }
-});
+    // 退出应用时兜底关闭浏览器，避免 Chrome 残留
+    app.on('before-quit', () => {
+        BrowserManager.close();
+    });
+
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+            createWindow();
+        }
+    });
+}
