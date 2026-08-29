@@ -5,13 +5,8 @@ const SITE_NAME = '运输车辆监控平台';
 const LOGIN_URL = 'http://114.80.138.167:6385/index.html';                          // 登录/主界面入口
 const ALARM_URL = 'http://114.80.138.167:6385/driveAls/view/alarm/index.html';      // 报警数据页
 
-// 判断是否已登录：登录表单（用户名输入框）不可见/不存在即视为已登录
-function isLoggedInInPage() {
-    const u = document.querySelector('input.username');
-    if (!u) return true;
-    const r = u.getBoundingClientRect();
-    return r.width === 0 || r.height === 0;
-}
+// 未登录时报警数据接口会返回 500 的路径关键字（用于判断会话是否有效）
+const UNAUTH_API_KEYS = ['fieldDisplay', 'queryUserAlarmList'];
 
 // 将用户输入规整为 yyyy-MM-dd HH:mm:ss
 // 支持粘贴（含 /、T 分隔或只写日期）；缺省时间时按开始=00:00:00、结束=23:59:59 补齐
@@ -71,15 +66,62 @@ class ServiceB {
         this.log = log;
     }
 
-    // 等待用户手动完成登录（登录成功后自动继续）
-    async waitForManualLogin(page) {
-        const loggedIn = await page.evaluate(isLoggedInInPage);
-        if (loggedIn) {
+    // 表格是否为空（记录总数缺失/为 0，或数据行数为 0）
+    async tableIsEmpty(page) {
+        return await page.evaluate(() => {
+            const t = (document.querySelector('#table_data_count') || {}).textContent || '';
+            const m = t.match(/(\d+)/);
+            const total = m ? parseInt(m[1], 10) : 0;
+            const rows = document.querySelectorAll('.datagrid-body tr').length;
+            return total === 0 || rows === 0;
+        }).catch(() => true);
+    }
+
+    // 打开报警数据页并确保已登录：
+    // 仅当报警数据接口返回 500 且表格为空时判定未登录，前往登录页等待手动登录后返回
+    async ensureLoggedInAlarm(page) {
+        let saw500 = false;
+        const onResp = (res) => {
+            const u = res.url();
+            if (res.status() === 500 && UNAUTH_API_KEYS.some(k => u.includes(k))) saw500 = true;
+        };
+        page.on('response', onResp);
+
+        const openAlarm = async () => {
+            saw500 = false;
+            await page.goto(ALARM_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            await new Promise(r => setTimeout(r, 4000)); // 等待数据接口返回
+        };
+
+        await openAlarm();
+        const needLogin = saw500 && (await this.tableIsEmpty(page));
+        page.off('response', onResp);
+        if (!needLogin) {
             this.log(`检测到 ${SITE_NAME} 已登录，继续`);
             return;
         }
-        this.log(`请在弹出的浏览器窗口中手动完成 ${SITE_NAME} 登录（含验证码），登录成功后自动继续...`);
-        await page.waitForFunction(isLoggedInInPage, { timeout: 600000 });
+        // 未登录：前往登录页等待手动登录
+        this.log(`未检测到有效登录（报警接口 500 且表格为空），请在弹出的浏览器窗口中手动完成 ${SITE_NAME} 登录（含验证码），登录成功后自动继续...`);
+        await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+        await page.waitForFunction(() => {
+            const userSpan = (document.querySelector('span.user') || {}).textContent || '';
+            const hasLogout = Array.from(document.querySelectorAll('span, a, li')).some(el => {
+                const t = (el.textContent || '').trim().replace(/\s+/g, '');
+                return t === '登出';
+            });
+            const menuOk = Array.from(document.querySelectorAll('a')).some(a =>
+                (a.textContent || '').trim() === '预警中心' || /menu-hd/.test((a.className || '').toString())
+            );
+            return !!userSpan.trim() || hasLogout || menuOk;
+        }, { timeout: 600000 });
+        this.log(`检测到 ${SITE_NAME} 已登录，重新进入报警数据页`);
+        // 登录成功后重新进入报警数据页并复核
+        page.on('response', onResp);
+        await openAlarm();
+        page.off('response', onResp);
+        if (saw500 && (await this.tableIsEmpty(page))) {
+            this.log('警告: 重新进入报警数据页后仍出现接口 500 且表格为空，可能仍需登录');
+        }
     }
 
     // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL
@@ -146,12 +188,9 @@ class ServiceB {
         if (!browserManager.browser) await browserManager.launch(false);
         const page = await browserManager.newPage();
 
-        // 直接打开报警数据页；若未登录会自动跳转登录页，等待用户手动登录
-        await page.goto(ALARM_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-        await page.waitForFunction(() => typeof doSearch === 'function' || !!document.querySelector('input.username'), { timeout: 20000 }).catch(() => {});
-        await this.waitForManualLogin(page);
-        // 若刚完成登录（位于登录页），重新进入报警数据页
-        await page.goto(ALARM_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+        // 打开报警数据页并确保已登录（接口 500/无预警中心导航栏则先手动登录）
+        await this.ensureLoggedInAlarm(page);
+        // 等待报警页脚本就绪
         await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 20000 });
 
         // 规整起止时间（支持时分秒与粘贴），并设置筛选条件后查询第 1 页
