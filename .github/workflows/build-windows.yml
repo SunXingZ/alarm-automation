@@ -32,7 +32,8 @@ jobs:
           npm_config_msvs_version: "2022"
 
       - name: Build Windows installer
-        run: npx electron-builder --win --x64
+        # --publish never：只构建，不发布到 GitHub Releases（避免需要 GH_TOKEN）
+        run: npx electron-builder --win --x64 --publish never
         env:
           # 跳过代码签名（未配置证书）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
