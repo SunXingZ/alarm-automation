@@ -31,12 +31,46 @@ jobs:
         env:
           npm_config_msvs_version: "2022"
 
+      # 目标 Windows 电脑可能没装 VC++ 运行库，把 VS 运行库 DLL 复制到
+      # tfjs_binding.node 同目录，保证任何机器都能加载（找不到源文件则跳过）
+      - name: Bundle VC++ runtime DLLs
+        shell: pwsh
+        run: |
+          $dst = "node_modules\@tensorflow\tfjs-node\lib\napi-v8"
+          if (Test-Path $dst) {
+            Get-ChildItem "node_modules\electron\dist" -Filter "*.dll" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match "^(vcruntime140|vcruntime140_1|msvcp140|concrt140)" } |
+              Copy-Item -Destination $dst -Force -ErrorAction SilentlyContinue
+            Write-Host "runtime DLLs in tfjs-node napi dir:"
+            Get-ChildItem $dst -Filter "*.dll" | Select-Object -ExpandProperty Name
+          } else {
+            Write-Host "tfjs-node napi dir not found: $dst"
+          }
+
+      # 构建前自检：确认 sharp / tfjs-node 两个原生模块在 Windows 上可正常加载
+      - name: Verify native modules load
+        run: node -e "require('sharp'); require('@tensorflow/tfjs-node'); console.log('native modules OK: sharp + tfjs-node')"
+
       - name: Build Windows installer
         # --publish never：只构建，不发布到 GitHub Releases（避免需要 GH_TOKEN）
         run: npx electron-builder --win --x64 --publish never
         env:
           # 跳过代码签名（未配置证书）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      # 打包后校验：确认原生 .node 与依赖 DLL 被正确解出 asar（否则 Windows 无法加载）
+      - name: Verify native files unpacked from asar
+        shell: pwsh
+        run: |
+          $required = @(
+            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@tensorflow\tfjs-node\lib\napi-v8\tfjs_binding.node",
+            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@tensorflow\tfjs-node\lib\napi-v8\tensorflow.dll",
+            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@img\sharp-win32-x64\lib\sharp-win32-x64-0.35.4.node"
+          )
+          foreach ($f in $required) {
+            if (Test-Path $f) { Write-Host "OK: $f" }
+            else { Write-Host "MISSING: $f"; exit 1 }
+          }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4

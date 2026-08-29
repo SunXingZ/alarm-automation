@@ -26,6 +26,10 @@
       "automation/**/*",
       "models/**/*"
     ],
+    "asarUnpack": [
+      "**/node_modules/@tensorflow/tfjs-node/**",
+      "**/node_modules/@img/**"
+    ],
     "mac": {
       "target": [
         "dmg",

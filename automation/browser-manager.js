@@ -15,7 +15,11 @@ const CHROME_CANDIDATES = [
     '/usr/bin/chromium-browser',
     process.env.PROGRAMFILES + '\\Google\\Chrome\\Application\\chrome.exe',       // Windows
     process.env['PROGRAMFILES(X86)'] + '\\Google\\Chrome\\Application\\chrome.exe',
-    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe'
+    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+    // Windows 自带的 Edge（多数 Windows 机器未安装 Google Chrome）
+    process.env['PROGRAMFILES(X86)'] + '\\Microsoft\\Edge\\Application\\msedge.exe',
+    process.env.PROGRAMFILES + '\\Microsoft\\Edge\\Application\\msedge.exe',
+    process.env.LOCALAPPDATA + '\\Microsoft\\Edge\\Application\\msedge.exe'
 ].filter(Boolean);
 
 function resolveChromeExecutable() {
@@ -34,15 +38,28 @@ class BrowserManager {
 
     async launch(headless = true) {
         const executablePath = resolveChromeExecutable();
-        // puppeteer >= 22 已移除 'new' 字符串值，headless: true 即新的无头模式
-        this.browser = await puppeteer.launch({
-            headless,
+        const baseOpts = {
+            headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
             defaultViewport: { width: 1366, height: 768 },
-            userDataDir: USER_DATA_DIR,
-            // 优先使用系统 Chrome；找不到再退回 puppeteer 自带浏览器
-            ...(executablePath ? { executablePath } : { channel: 'chrome' })
-        });
+            userDataDir: USER_DATA_DIR
+        };
+        // 优先使用系统浏览器路径（Chrome / Edge）
+        if (executablePath) {
+            this.browser = await puppeteer.launch({ ...baseOpts, executablePath });
+            return;
+        }
+        // 找不到具体路径时，按 channel 让 puppeteer 自动解析：
+        // Windows 几乎都自带 Edge，其次 Chrome
+        for (const channel of ['msedge', 'chrome']) {
+            try {
+                this.browser = await puppeteer.launch({ ...baseOpts, channel });
+                return;
+            } catch (e) {
+                console.warn(`使用 channel=${channel} 启动浏览器失败: ${e.message}`);
+            }
+        }
+        throw new Error('未找到可用的 Chromium 浏览器（Chrome/Edge），无法启动自动化');
     }
 
     async newPage() {
