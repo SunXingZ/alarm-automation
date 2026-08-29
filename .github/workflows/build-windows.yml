@@ -49,7 +49,8 @@ jobs:
 
       # 构建前自检：确认 sharp / tfjs-node 两个原生模块在 Windows 上可正常加载
       - name: Verify native modules load
-        run: node -e "require('sharp'); require('@tensorflow/tfjs-node'); console.log('native modules OK: sharp + tfjs-node')"
+        run: >-
+          node -e "require('sharp'); require('@tensorflow/tfjs-node'); console.log('native modules OK: sharp + tfjs-node')"
 
       - name: Build Windows installer
         # --publish never：只构建，不发布到 GitHub Releases（避免需要 GH_TOKEN）
