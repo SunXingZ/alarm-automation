@@ -1,0 +1,344 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 16px 16px;
+    color: #333;
+}
+
+.page {
+    width: 100%;
+    max-width: 520px;
+}
+
+/* 页面头部 */
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    color: #fff;
+}
+
+.header-icon {
+    font-size: 36px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 10px;
+    line-height: 1;
+}
+
+.page-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.subtitle {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.75);
+    margin-top: 4px;
+}
+
+/* 表单卡片 */
+.form-container {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+    padding: 16px;
+    margin-bottom: 14px;
+}
+
+.card {
+    margin-bottom: 12px;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+/* 可折叠卡片头 */
+.collapsible {
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapse-icon {
+    transition: transform 0.2s;
+    font-size: 14px;
+    color: #8892a0;
+    margin-left: auto;
+}
+
+.collapsible.open .collapse-icon {
+    transform: rotate(90deg);
+}
+
+.filter-body {
+    padding-top: 2px;
+}
+
+.badge {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.badge-a {
+    background: linear-gradient(135deg, #4a90d9, #357abd);
+}
+
+.badge-b {
+    background: linear-gradient(135deg, #f2994a, #eb7c3e);
+}
+
+.card-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+/* 表单字段 */
+.field {
+    margin-bottom: 10px;
+}
+
+.field:last-child {
+    margin-bottom: 0;
+}
+
+/* 两列布局 */
+.field-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 12px;
+}
+
+.field-full {
+    grid-column: span 2;
+}
+
+.field-row {
+    display: flex;
+    gap: 12px;
+}
+
+.field-row .field {
+    flex: 1;
+}
+
+.field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.field input[type="text"],
+.field input[type="password"],
+.field input[type="date"] {
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 14px;
+    border: 1px solid #d9dee5;
+    border-radius: 10px;
+    background: #f8fafc;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.field input:focus {
+    outline: none;
+    border-color: #4a90d9;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.15);
+}
+
+.field input::placeholder {
+    color: #aab4c0;
+}
+
+/* 筛选条件 */
+.filter-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 6px;
+}
+
+.filter-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 4px;
+    padding: 8px 10px;
+    background: #f6f8fb;
+    border-radius: 8px;
+}
+
+.filter-sub-title {
+    width: 100%;
+    font-size: 12px;
+    color: #8892a0;
+    margin: 4px 0 2px;
+}
+
+.filter-sub-title:first-child {
+    margin-top: 0;
+}
+
+.checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #555;
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+
+.checkbox-label:hover {
+    background: #eef4fb;
+}
+
+.checkbox-label input {
+    width: auto;
+    margin: 0;
+}
+
+.filter-tip {
+    display: block;
+    font-size: 12px;
+    color: #aab4c0;
+    margin-top: 6px;
+}
+
+/* 启动按钮 */
+.primary-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 13px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #4a90d9, #357abd);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(74, 144, 217, 0.35);
+    transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+}
+
+.primary-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(74, 144, 217, 0.45);
+}
+
+.primary-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.primary-btn:disabled {
+    background: linear-gradient(135deg, #9db8d6, #86a7c9);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.btn-icon {
+    font-size: 13px;
+}
+
+/* 日志区 */
+.log-container {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+    padding: 12px 16px 14px;
+}
+
+.log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.log-header h3 {
+    font-size: 15px;
+    color: #2c3e50;
+}
+
+.log-status {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: #eef1f5;
+    color: #8892a0;
+    font-weight: 600;
+}
+
+.log-status.running {
+    background: #e7f3ff;
+    color: #357abd;
+}
+
+.log-status.done {
+    background: #e6f7ec;
+    color: #2e9e5b;
+}
+
+.log-status.error {
+    background: #fdecec;
+    color: #d9534f;
+}
+
+#log-output {
+    background: #1e2530;
+    color: #c8d3e0;
+    padding: 10px 12px;
+    height: 150px;
+    overflow-y: auto;
+    font-family: "SF Mono", "Menlo", "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    border-radius: 10px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+#log-output::-webkit-scrollbar {
+    width: 8px;
+}
+
+#log-output::-webkit-scrollbar-thumb {
+    background: #3a4657;
+    border-radius: 4px;
+}
+
+.page-footer {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    margin-top: 18px;
+}

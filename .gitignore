@@ -1,0 +1,10 @@
+# node.js
+#
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# 浏览器持久化登录数据（含会话信息，勿提交）
+.chrome-profile/
+
+dist/

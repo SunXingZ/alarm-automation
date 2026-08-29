@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>报警申诉自动化工具</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="page">
+        <header class="page-header">
+            <div class="header-icon">🛡️</div>
+            <div>
+                <h1>报警申诉自动化工具</h1>
+                <p class="subtitle">在浏览器中手动登录道路运输车辆运营监测分析应用 / 运输车辆监控平台，自动化获取待处理订单并保存人脸截图</p>
+            </div>
+        </header>
+
+        <section class="form-container">
+            <!-- 查询条件 -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>查询条件（可选）</h2>
+                </div>
+                <div class="field-grid">
+                    <div class="field field-full">
+                        <label for="plate">车牌号</label>
+                        <input type="text" id="plate" placeholder="填写后跳过道路运输车辆运营监测分析应用，直接查询运输车辆监控平台" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="start-date">开始时间</label>
+                        <input type="text" id="start-date" placeholder="2026-08-29 00:00:00" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="end-date">结束时间</label>
+                        <input type="text" id="end-date" placeholder="2026-08-29 23:59:59" autocomplete="off">
+                    </div>
+                </div>
+                <small class="filter-tip">时间支持粘贴（如 2026-08-29 13:15:06）；不填时间则默认当日 00:00:00 ~ 23:59:59</small>
+            </div>
+
+            <!-- 筛选条件（可折叠） -->
+            <div class="card">
+                <div class="card-header collapsible" id="filter-header">
+                    <h2>筛选条件</h2>
+                    <span class="collapse-icon" id="filter-icon">▸</span>
+                </div>
+                <div id="filter-body" class="filter-body" style="display:none">
+                    <div class="field">
+                        <div class="filter-section-title">报警类型</div>
+                        <div id="alarm-type-filters" class="filter-checks"></div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <div class="filter-section-title">风险等级</div>
+                            <div id="risk-level-filters" class="filter-checks"></div>
+                        </div>
+                        <div class="field">
+                            <div class="filter-section-title">处理状态</div>
+                            <div id="repair-status-filters" class="filter-checks"></div>
+                        </div>
+                    </div>
+                    <small class="filter-tip">不勾选则不限制，按平台默认（全部）查询</small>
+                </div>
+            </div>
+
+            <button id="start-btn" class="primary-btn">
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">开始自动化</span>
+            </button>
+        </section>
+
+        <section id="log-container" class="log-container">
+            <div class="log-header">
+                <h3>运行日志</h3>
+                <span class="log-status" id="log-status">空闲</span>
+            </div>
+            <div id="log-output"></div>
+        </section>
+
+        <footer class="page-footer">报警申诉自动化工具 · 请妥善保管账号信息</footer>
+    </main>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
