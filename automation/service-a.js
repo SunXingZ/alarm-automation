@@ -28,8 +28,9 @@ class ServiceA {
         }
 
         // 登录成功后进入报警申诉板块（选择器需用真实账号验证）
-        await page.goto(COMPLAINT_URL, { waitUntil: 'networkidle0', timeout: 30000 });
-        await page.waitForSelector('.order-list', { timeout: 20000 });
+        // networkidle0 易挂起，用 catch 兜底后交由 waitForSelector 等待页面渲染完成
+        await page.goto(COMPLAINT_URL, { waitUntil: 'networkidle0', timeout: 30000 }).catch(() => {});
+        await page.waitForSelector('.order-list', { timeout: 30000 });
 
         // 提取所有待处理订单信息（根据实际 DOM 调整）
         const orders = await page.evaluate(() => {

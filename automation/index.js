@@ -11,6 +11,9 @@ const { app } = require('electron');
 async function runAutomation(options = {}, log = console.log) {
     const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus } = options;
 
+    // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
+    const ENABLE_SERVICE_A = false;
+
     // 运输车辆监控平台筛选条件（不勾选则为空，查询时不限制）
     const filters = { alarmTypes: alarmTypes || [], riskLevels: riskLevels || [], repairStatus: repairStatus || [] };
 
@@ -28,8 +31,8 @@ async function runAutomation(options = {}, log = console.log) {
         let orders;
         if (plate) {
             orders = [{ plate, startDate: startDate || today(), endDate: endDate || today() }];
-            log(`已指定车牌 ${plate}，跳过道路运输车辆运营监测分析应用，直接查询运输车辆监控平台`);
-        } else {
+            log(`已指定车牌 ${plate}，直接查询运输车辆监控平台`);
+        } else if (ENABLE_SERVICE_A) {
             // 道路运输车辆运营监测分析应用：获取待处理订单（登录由用户手动完成，登录后自动继续）
             const serviceA = new ServiceA(log);
             orders = await serviceA.getPendingOrders();
@@ -38,6 +41,9 @@ async function runAutomation(options = {}, log = console.log) {
                 log('没有待处理订单，任务结束');
                 return { success: true, outputDir };
             }
+        } else {
+            log('道路运输车辆运营监测分析应用流程已暂时屏蔽，且未填写车牌号，无法获取待处理订单，任务结束');
+            return { success: true, outputDir };
         }
 
         // 运输车辆监控平台：查询并下载截图（登录由用户手动完成，登录后自动继续）
