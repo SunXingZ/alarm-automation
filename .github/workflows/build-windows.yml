@@ -10,7 +10,9 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    # 固定 windows-2022：自带 VS2022，node-gyp 可正常识别；
+    # 不能用 windows-latest（其 VS18 太新，node-gyp v10 检测失败）
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,10 +24,12 @@ jobs:
           node-version: 20
           cache: npm
 
-      # windows-latest 自带 VS2022 C++ 构建工具与 Python，
+      # windows-2022 自带 VS2022 C++ 构建工具与 Python，
       # 可在此直接源码编译 tfjs-node 的 win32-x64 原生绑定
       - name: Install dependencies
         run: npm ci
+        env:
+          npm_config_msvs_version: "2022"
 
       - name: Build Windows installer
         run: npx electron-builder --win --x64
