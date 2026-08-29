@@ -31,6 +31,22 @@ jobs:
         env:
           npm_config_msvs_version: "2022"
 
+      # tfjs-node 在 Node 20（napi=9）下会把 tensorflow.dll 放错目录（lib/napi-v9），
+      # 而 tfjs_binding.node 实际在 lib/napi-v8，导致加载时找不到 DLL。
+      # 这里把 tensorflow.dll 强制复制到绑定所在目录。
+      - name: Fix tensorflow.dll placement
+        shell: pwsh
+        run: |
+          $binding = Get-ChildItem "node_modules\@tensorflow\tfjs-node\lib" -Recurse -Filter "tfjs_binding.node" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $binding) {
+            Write-Host "tfjs_binding.node not found"
+            exit 1
+          }
+          Get-ChildItem "node_modules\@tensorflow\tfjs-node" -Recurse -Filter "tensorflow.dll" -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $binding.DirectoryName -Force -ErrorAction SilentlyContinue
+          Write-Host "tensorflow.dll -> $($binding.DirectoryName)"
+          Get-ChildItem $binding.DirectoryName | Select-Object -ExpandProperty Name
+
       # 目标 Windows 电脑可能没装 VC++ 运行库，把 VS 运行库 DLL 复制到
       # tfjs_binding.node 同目录，保证任何机器都能加载（找不到源文件则跳过）
       - name: Bundle VC++ runtime DLLs
@@ -72,6 +88,18 @@ jobs:
             if (Test-Path $f) { Write-Host "OK: $f" }
             else { Write-Host "MISSING: $f"; exit 1 }
           }
+
+      # 用 Electron 内置的 Node（与应用完全相同的运行时）实际加载两个原生模块，
+      # 验证打包进 app.asar.unpacked 的二进制确实可在 Windows 下加载
+      - name: Smoke test native modules under Electron runtime
+        shell: pwsh
+        run: |
+          Set-Content -Path smoke.js -Value "const sharp = require('sharp'); require('@tensorflow/tfjs-node'); console.log('Electron smoke OK: sharp + tfjs-node under electron ' + process.versions.electron); process.exit(0);"
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          npx electron smoke.js
+          $code = $LASTEXITCODE
+          Remove-Item smoke.js -ErrorAction SilentlyContinue
+          exit $code
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
