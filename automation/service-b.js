@@ -61,23 +61,6 @@ async function waitDetailFrame(page, alarmId) {
     return null;
 }
 
-// 等待报警页脚本就绪（window.doSearch 由页面 JS 定义，用于触发查询）。
-// Windows 上网络/页面脚本加载慢时，20s 固定超时容易直接抛 “Waiting failed: 20000ms exceeded” 导致整个任务失败；
-// 这里延长超时，超时后自动刷新页面重试，并输出明确日志，避免静默失败。
-async function waitForSearchReady(page, log) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 60000 });
-            return;
-        } catch (e) {
-            log(`报警页脚本未就绪（第 ${attempt}/3 次），刷新页面后重试...`);
-            await page.goto(ALARM_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-            await new Promise(r => setTimeout(r, 2000));
-        }
-    }
-    throw new Error('报警页脚本加载失败：doSearch 长时间未定义，请检查网络连接后重试');
-}
-
 class ServiceB {
     constructor(log = console.log) {
         this.log = log;
@@ -148,6 +131,43 @@ class ServiceB {
         page.off('response', onResp);
         if (saw500 && (await this.tableIsEmpty(page))) {
             this.log('警告: 重新进入报警数据页后仍出现接口 500 且表格为空，可能仍需登录');
+        }
+        return page;
+    }
+
+    // 等待报警页脚本就绪（window.doSearch 由页面 JS 定义，用于触发查询）。
+    // 无头模式在部分环境（尤其 Windows）下会被站点识别并屏蔽页面脚本/数据，表现为 doSearch 一直不定义；
+    // 这里延长超时并自动刷新重试，仍失败时自动切换为可见浏览器重试（可见模式已验证可正常加载）。
+    // 返回当前可用 page（切换浏览器后 page 会更换）。
+    async waitForSearchReady(page) {
+        const tryWait = async (p) => {
+            try {
+                await p.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 30000 });
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            if (await tryWait(page)) return page;
+            this.log(`报警页脚本未就绪（第 ${attempt}/3 次），刷新页面后重试...`);
+            await page.goto(ALARM_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // 无头模式下脚本仍不加载：切换为可见浏览器并重新进入报警数据页（含登录检测）
+        if (browserManager.headless) {
+            this.log('无头模式下报警页脚本持续未就绪（可能被站点识别屏蔽），自动切换为可见浏览器窗口重试...');
+            await browserManager.close();
+            await browserManager.launch(false);
+            page = await browserManager.newPage();
+            page = await this.ensureLoggedInAlarm(page);
+        }
+
+        const ok = await tryWait(page);
+        if (!ok) {
+            throw new Error('报警页脚本加载失败：doSearch 长时间未定义，请检查网络，或勾选“显示浏览器窗口”后重试');
         }
         return page;
     }
@@ -225,8 +245,8 @@ class ServiceB {
 
         // 打开报警数据页并确保已登录（接口 500 且空表则先手动登录，可能切换为可见浏览器并更换 page）
         page = await this.ensureLoggedInAlarm(page);
-        // 等待报警页脚本就绪（超时自动刷新重试，避免 Windows 慢网络下 20s 超时导致任务失败）
-        await waitForSearchReady(page, this.log);
+        // 等待报警页脚本就绪（超时自动刷新重试；无头模式被识别屏蔽时自动切换为可见浏览器，避免 Windows 下脚本不加载）
+        page = await this.waitForSearchReady(page);
 
         // 规整起止时间（支持时分秒与粘贴），并设置筛选条件后查询第 1 页
         const startVal = normalizeToDatetime(startDate, false);
