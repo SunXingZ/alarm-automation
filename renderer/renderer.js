@@ -79,6 +79,13 @@ filterHeader.addEventListener('click', () => {
     filterHeader.classList.toggle('open', !open);
 });
 
+// 显示浏览器窗口开关（有头/无头模式）：默认无头后台运行，记住用户上次选择
+const showBrowserInput = document.getElementById('show-browser');
+if (localStorage.getItem('show-browser') === '1') showBrowserInput.checked = true;
+showBrowserInput.addEventListener('change', () => {
+    localStorage.setItem('show-browser', showBrowserInput.checked ? '1' : '0');
+});
+
 // 本地表格文件：解析文件名中的车牌号与日期并自动填入查询条件
 const localFileInput = document.getElementById('local-file');
 const filePickBtn = document.getElementById('file-pick-btn');
@@ -175,7 +182,8 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         alarmTypes: readChecks('alarm-type-filters', parseInt),
         riskLevels: readChecks('risk-level-filters', parseInt),
         repairStatus: readChecks('repair-status-filters', (v) => v),
-        spreadsheetPath: spreadsheetPath || ''
+        spreadsheetPath: spreadsheetPath || '',
+        headless: !document.getElementById('show-browser').checked // 勾选显示浏览器 => 有头模式
     };
 
     const btn = document.getElementById('start-btn');

@@ -61,6 +61,23 @@ async function waitDetailFrame(page, alarmId) {
     return null;
 }
 
+// 等待报警页脚本就绪（window.doSearch 由页面 JS 定义，用于触发查询）。
+// Windows 上网络/页面脚本加载慢时，20s 固定超时容易直接抛 “Waiting failed: 20000ms exceeded” 导致整个任务失败；
+// 这里延长超时，超时后自动刷新页面重试，并输出明确日志，避免静默失败。
+async function waitForSearchReady(page, log) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 60000 });
+            return;
+        } catch (e) {
+            log(`报警页脚本未就绪（第 ${attempt}/3 次），刷新页面后重试...`);
+            await page.goto(ALARM_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+    throw new Error('报警页脚本加载失败：doSearch 长时间未定义，请检查网络连接后重试');
+}
+
 class ServiceB {
     constructor(log = console.log) {
         this.log = log;
@@ -208,8 +225,8 @@ class ServiceB {
 
         // 打开报警数据页并确保已登录（接口 500 且空表则先手动登录，可能切换为可见浏览器并更换 page）
         page = await this.ensureLoggedInAlarm(page);
-        // 等待报警页脚本就绪
-        await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 20000 });
+        // 等待报警页脚本就绪（超时自动刷新重试，避免 Windows 慢网络下 20s 超时导致任务失败）
+        await waitForSearchReady(page, this.log);
 
         // 规整起止时间（支持时分秒与粘贴），并设置筛选条件后查询第 1 页
         const startVal = normalizeToDatetime(startDate, false);

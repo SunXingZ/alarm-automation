@@ -46,7 +46,16 @@ class BrowserManager {
         const executablePath = resolveChromeExecutable();
         const baseOpts = {
             headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            // 反自动化检测参数：部分站点会检测无头/自动化特征（navigator.webdriver、--enable-automation 痕迹等），
+            // 检测到后可能不下发数据/脚本，导致 doSearch 等页面函数不定义（表现为 “Waiting failed” 超时）
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-blink-features=AutomationControlled', // 关闭自动化控制特征
+                '--disable-infobars',
+                '--no-first-run',
+                '--no-default-browser-check'
+            ],
             defaultViewport: { width: 1366, height: 768 },
             userDataDir: getUserDataDir()
         };
@@ -68,12 +77,31 @@ class BrowserManager {
         throw new Error('未找到可用的 Chromium 浏览器（Chrome/Edge），无法启动自动化');
     }
 
+    // 无头模式反检测：隐藏 navigator.webdriver 自动化标记，并移除 UA 中的无头标记，
+    // 降低站点识别为自动化浏览器的概率（识别后可能不下发数据，表现为 Waiting failed 超时）
+    async stealthifyPage(page) {
+        // 在页面任何脚本执行前注入，覆盖自动化检测常用的几个特征
+        page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            if (window.chrome && window.chrome.runtime) {
+                Object.defineProperty(window.chrome, 'runtime', { get: () => undefined });
+            }
+        });
+        // 新无头模式 UA 本身已不含 HeadlessChrome，这里仅作兜底（旧无头/个别版本）
+        try {
+            const ua = await page.browser().userAgent();
+            await page.setUserAgent(ua.replace('HeadlessChrome', 'Chrome').replace(/Headless/, ''));
+        } catch (e) { /* UA 覆盖失败不影响主流程 */ }
+    }
+
     async newPage() {
         // 浏览器未启动，或已被用户手动关闭/断开：先尝试复用，失败则自动重启。
         // 不依赖 isConnected()（不同 puppeteer 版本 API 不同），直接 try/catch newPage()
         if (this.browser) {
             try {
-                return await this.browser.newPage();
+                const page = await this.browser.newPage();
+                await this.stealthifyPage(page);
+                return page;
             } catch (e) {
                 // 浏览器已关闭/断开，继续重建
             }
@@ -83,7 +111,9 @@ class BrowserManager {
         for (let i = 0; i < 5; i++) {
             try {
                 await this.launch(this.headless !== false);
-                return await this.browser.newPage();
+                const page = await this.browser.newPage();
+                await this.stealthifyPage(page);
+                return page;
             } catch (e) {
                 await new Promise(r => setTimeout(r, 800));
             }
