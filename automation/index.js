@@ -22,9 +22,9 @@ async function runAutomation(options = {}, log = console.log) {
 
     try {
         log('开始自动化流程...');
-        // 登录需用户手动在浏览器窗口中操作，必须使用可见窗口（有头模式）
-        await BrowserManager.launch(false);
-        log('浏览器已启动（请在弹出的窗口手动登录）');
+        // 默认以无头模式启动：会话仍有效则全程后台运行；检测到需要登录时才切换为可见窗口
+        await BrowserManager.launch(true);
+        log('浏览器已启动（已登录则全程后台运行；需要登录时自动弹出可见窗口）');
 
         // 组装待处理订单：填写了车牌则跳过道路运输车辆运营监测分析应用，直接查询运输车辆监控平台
         const today = () => {
@@ -168,8 +168,12 @@ async function runAutomation(options = {}, log = console.log) {
             faceSet.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
             for (let i = 0; i < faceSet.length; i++) {
                 const outputPath = path.join(orderDir, `face_${String(i + 1).padStart(3, '0')}.jpg`);
-                await compressToJpg(faceSet[i].path, outputPath, 3);
-                log(`保存: ${outputPath}（${faceSet[i].time}）`);
+                try {
+                    await compressToJpg(faceSet[i].path, outputPath, 3);
+                    log(`保存: ${outputPath}（${faceSet[i].time}）`);
+                } catch (err) {
+                    log(`保存人脸失败: ${outputPath} - ${err.message}`);
+                }
             }
 
             const parsed = readSpreadsheet(spreadsheetPath);

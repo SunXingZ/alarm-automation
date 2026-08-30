@@ -79,6 +79,7 @@ class ServiceB {
 
     // 打开报警数据页并确保已登录：
     // 仅当报警数据接口返回 500 且表格为空时判定未登录，前往登录页等待手动登录后返回
+    // 返回当前可用 page（需要登录时可能从无头切换为可见浏览器，page 会更换）
     async ensureLoggedInAlarm(page) {
         let saw500 = false;
         const onResp = (res) => {
@@ -97,9 +98,18 @@ class ServiceB {
         const needLogin = saw500 && (await this.tableIsEmpty(page));
         page.off('response', onResp);
         if (!needLogin) {
-            this.log(`检测到 ${SITE_NAME} 已登录，继续`);
-            return;
+            this.log(`检测到 ${SITE_NAME} 已登录，继续（无头模式后台运行）`);
+            return page;
         }
+
+        // 需要登录：若当前是无头模式，先切换为可见浏览器，供用户手动登录
+        if (browserManager.headless) {
+            this.log(`检测到需要登录，切换为可见浏览器窗口...`);
+            await browserManager.close();
+            await browserManager.launch(false);
+            page = await browserManager.newPage();
+        }
+
         // 未登录：前往登录页等待手动登录
         this.log(`未检测到有效登录（报警接口 500 且表格为空），请在弹出的浏览器窗口中手动完成 ${SITE_NAME} 登录（含验证码），登录成功后自动继续...`);
         await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
@@ -122,6 +132,7 @@ class ServiceB {
         if (saw500 && (await this.tableIsEmpty(page))) {
             this.log('警告: 重新进入报警数据页后仍出现接口 500 且表格为空，可能仍需登录');
         }
+        return page;
     }
 
     // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL，并返回该行报警时间
@@ -192,12 +203,11 @@ class ServiceB {
     // 按车牌 + 起止时间查询报警数据，分页采集所有“查看照片”里的人脸截图 URL
     // filters: { alarmTypes: [], riskLevels: [], repairStatus: [] }，为空则不限制
     async searchAndGetScreenshots(plate, startDate, endDate, filters = {}) {
-        // 浏览器已在主流程中启动（有头模式），直接复用
-        if (!browserManager.browser) await browserManager.launch(false);
-        const page = await browserManager.newPage();
+        // 浏览器已在主流程中启动；newPage() 内部会处理未启动/断线重建（保留当前无头/可见模式）
+        let page = await browserManager.newPage();
 
-        // 打开报警数据页并确保已登录（接口 500/无预警中心导航栏则先手动登录）
-        await this.ensureLoggedInAlarm(page);
+        // 打开报警数据页并确保已登录（接口 500 且空表则先手动登录，可能切换为可见浏览器并更换 page）
+        page = await this.ensureLoggedInAlarm(page);
         // 等待报警页脚本就绪
         await page.waitForFunction(() => typeof window.doSearch === 'function', { timeout: 20000 });
 

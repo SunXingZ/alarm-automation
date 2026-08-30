@@ -42,6 +42,7 @@ class BrowserManager {
     }
 
     async launch(headless = true) {
+        this.headless = headless; // 记住模式，重启时保持一致
         const executablePath = resolveChromeExecutable();
         const baseOpts = {
             headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
@@ -68,8 +69,26 @@ class BrowserManager {
     }
 
     async newPage() {
-        if (!this.browser) await this.launch();
-        return await this.browser.newPage();
+        // 浏览器未启动，或已被用户手动关闭/断开：先尝试复用，失败则自动重启。
+        // 不依赖 isConnected()（不同 puppeteer 版本 API 不同），直接 try/catch newPage()
+        if (this.browser) {
+            try {
+                return await this.browser.newPage();
+            } catch (e) {
+                // 浏览器已关闭/断开，继续重建
+            }
+        }
+        // 重建：保留原来的可见/无头模式，并对刚关闭进程的配置文件锁做短暂重试
+        this.browser = null;
+        for (let i = 0; i < 5; i++) {
+            try {
+                await this.launch(this.headless !== false);
+                return await this.browser.newPage();
+            } catch (e) {
+                await new Promise(r => setTimeout(r, 800));
+            }
+        }
+        throw new Error('浏览器已关闭，自动重新启动失败');
     }
 
     async close() {

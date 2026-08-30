@@ -1,7 +1,8 @@
 const BrowserManager = require('./browser-manager');
 const fs = require('fs-extra');
 const path = require('path');
-const { compressToJpg } = require('./image-saver');
+const { pathToFileURL } = require('url');
+const { compressToJpgBuffer } = require('./image-saver');
 
 // HTML 转义，避免单元格内容破坏结构
 function escapeHtml(v) {
@@ -112,26 +113,24 @@ async function composeFaceStopImage(facePaths, seg, plate, header, headerStyles,
         </table>
     </div></body></html>`;
 
-    const htmlPath = path.join(tmpDir, 'compose_tmp.html');
+    const htmlPath = path.join(tmpDir, `compose_tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.html`);
     fs.writeFileSync(htmlPath, html, 'utf8');
 
     const page = await BrowserManager.newPage();
     try {
         // 视口放宽，保证完整列都能被截到（列宽较大时表格可能超过 1320）
         await page.setViewport({ width: 2600, height: 1600, deviceScaleFactor: 1 });
-        await page.goto('file://' + htmlPath, { waitUntil: 'load' });
+        // pathToFileURL 生成正确的 file:// URL（Windows 下路径需为 file:///C:/... 形式）
+        await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'load' });
         await new Promise(r => setTimeout(r, 400));
         const el = await page.$('#compose');
         if (!el) throw new Error('拼图元素未渲染');
         const buf = await el.screenshot({ type: 'jpeg', quality: 88 });
-        const tmpJpg = path.join(tmpDir, 'compose_tmp.jpg');
-        fs.writeFileSync(tmpJpg, buf);
-        // 压缩到 ≤3M 后写入最终路径
-        await compressToJpg(tmpJpg, outputPath, 3);
-        fs.removeSync(tmpJpg);
+        // 截图 buffer 直接压缩到最终路径，不再写中间文件，避免 Windows 下文件被占用导致 open 失败
+        await compressToJpgBuffer(buf, outputPath, 3);
     } finally {
-        await page.close();
-        fs.removeSync(htmlPath);
+        try { await page.close(); } catch (e) { /* ignore */ }
+        try { fs.removeSync(htmlPath); } catch (e) { /* Windows 下文件可能被短暂占用，忽略清理失败 */ }
     }
 }
 
