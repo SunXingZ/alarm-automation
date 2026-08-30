@@ -4,12 +4,15 @@ const ServiceB = require('./service-b');
 const FaceComparator = require('./face-comparator');
 const { isDriverScreenshot } = require('./driver-face-filter');
 const { downloadImage, compressToJpg } = require('./image-saver');
+const { readSpreadsheet, findStopsInWindow, pickClosestStop } = require('./stop-finder');
+const { composeFaceStopImage } = require('./image-composer');
+const { readWatermarkTime, closeWorker } = require('./watermark-ocr');
 const fs = require('fs-extra');
 const path = require('path');
 const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
-    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus } = options;
+    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath } = options;
 
     // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
     const ENABLE_SERVICE_A = false;
@@ -60,52 +63,68 @@ async function runAutomation(options = {}, log = console.log) {
         let totalFaces = 0;
         const savedDirs = []; // 实际保存了人脸的目录（用于完成后自动打开）
 
-        // 逐订单处理：按“车牌 + 日期”独立下载、聚类、保存
+        // 逐订单处理：按“车牌 + 日期”独立下载、聚类、保存，并按表格匹配停靠段
         for (const order of orders) {
             log(`正在处理车牌: ${order.plate}，时间: ${order.startDate} ~ ${order.endDate}`);
-            const urls = await serviceB.searchAndGetScreenshots(
+            const photos = await serviceB.searchAndGetScreenshots(
                 order.plate, order.startDate, order.endDate, filters
             );
-            if (urls.length === 0) {
+            if (photos.length === 0) {
                 log(`车牌 ${order.plate} 未找到截图，跳过`);
                 continue;
             }
-            totalScreenshots += urls.length;
+            totalScreenshots += photos.length;
 
-            // 下载该订单截图到临时目录
-            const localPaths = [];
-            for (let i = 0; i < urls.length; i++) {
+            // 下载该订单截图到临时目录（记录每张截图对应的报警时间）
+            const localPaths = []; // [{ path, time }]
+            for (let i = 0; i < photos.length; i++) {
                 const filePath = path.join(tmpDir, `${sanitize(order.plate)}_${i}.jpg`);
                 try {
-                    await downloadImage(urls[i], filePath);
-                    localPaths.push(filePath);
+                    await downloadImage(photos[i].url, filePath);
+                    localPaths.push({ path: filePath, time: photos[i].time || '' });
                 } catch (err) {
-                    log(`下载截图失败: ${urls[i]} - ${err.message}`);
+                    log(`下载截图失败: ${photos[i].url} - ${err.message}`);
                 }
             }
             log(`车牌 ${order.plate} 成功下载 ${localPaths.length} 张截图`);
             if (localPaths.length === 0) continue;
 
             // 只保留司机人脸截图（四角均有水印文字），过滤非司机照片
-            const driverPaths = [];
-            for (const p of localPaths) {
+            const driverPaths = []; // [{ path, time }]
+            for (const item of localPaths) {
                 try {
-                    if (await isDriverScreenshot(p)) {
-                        driverPaths.push(p);
+                    if (await isDriverScreenshot(item.path)) {
+                        driverPaths.push(item);
                     } else {
-                        fs.removeSync(p); // 删除非司机截图，减少后续比对量
+                        fs.removeSync(item.path); // 删除非司机截图，减少后续比对量
                     }
                 } catch (err) {
-                    log(`司机截图判定失败: ${p} - ${err.message}`);
+                    log(`司机截图判定失败: ${item.path} - ${err.message}`);
                 }
             }
             log(`车牌 ${order.plate} 司机截图 ${driverPaths.length}/${localPaths.length} 张`);
             if (driverPaths.length === 0) continue;
 
-            // 该订单单独人脸聚类，获取不同人脸的代表截图
-            const representativePaths = await comparator.clusterFaces(driverPaths);
-            log(`车牌 ${order.plate} 识别出 ${representativePaths.length} 个不同人脸`);
-            totalFaces += representativePaths.length;
+            // 用截图水印上的“抓拍时间”覆盖报警行解析的时间：两者可能不一致，
+            // 水印时间与 GPS 轨迹表同源，是匹配停靠段的正确依据（否则停靠段会落在人脸时间范围外）
+            for (const item of driverPaths) {
+                try {
+                    const wmTime = await readWatermarkTime(item.path);
+                    if (wmTime) {
+                        item.time = wmTime;
+                    } else {
+                        log(`水印时间识别失败，保留报警行时间: ${item.time}`);
+                    }
+                } catch (err) {
+                    log(`水印时间识别异常: ${item.path} - ${err.message}`);
+                }
+            }
+
+            // 该订单单独人脸聚类，返回每个聚类（不同人脸）及全部成员截图
+            const clusters = await comparator.clusterFaces(driverPaths.map(x => x.path));
+            const representativePaths = clusters.map(c => c.representative);
+            log(`车牌 ${order.plate} 识别出 ${clusters.length} 个不同人脸`);
+            totalFaces += clusters.length;
 
             // 保存到 output/<车牌>_<日期>/face_NNN.jpg（单层目录）
             const orderDir = path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10));
@@ -116,6 +135,55 @@ async function runAutomation(options = {}, log = console.log) {
                 await compressToJpg(representativePaths[i], outputPath, 3);
                 log(`保存: ${outputPath}`);
             }
+
+            // 表格停靠段匹配（换脸时刻）：按时间顺序汇总每个聚类的成员出现时间，
+            // 相邻出现的人脸属于不同聚类即“换脸”事件；每次换脸以 旧脸最后一次出现 + 新脸第一次出现 为窗口，
+            // 在表格内找 0 速段及前后 >0 速行，各生成一张拼图
+            if (!spreadsheetPath) continue;
+            const timeByPath = new Map(driverPaths.map(x => [x.path, x.time]));
+            const occ = [];
+            clusters.forEach((c, ci) => {
+                for (const p of c.members) {
+                    const t = timeByPath.get(p) || '';
+                    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(t)) occ.push({ path: p, time: t, ci });
+                }
+            });
+            occ.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+            // 相邻出现的人脸聚类不同 => 换脸事件
+            const changes = [];
+            for (let k = 0; k < occ.length - 1; k++) {
+                if (occ[k].ci !== occ[k + 1].ci) changes.push({ old: occ[k], new: occ[k + 1] });
+            }
+            log(`表格匹配：${occ.length} 张含人脸截图 / ${clusters.length} 个不同人脸，检测到 ${changes.length} 个换脸事件`);
+            if (changes.length === 0) {
+                log('未检测到换脸事件，跳过停靠段匹配');
+                continue;
+            }
+
+            const parsed = readSpreadsheet(spreadsheetPath);
+            if (parsed.error) { log(`解析表格失败: ${parsed.error}`); continue; }
+            const tOf = (s) => new Date(String(s).replace(' ', 'T'));
+            let stopNo = 0;
+            for (const ch of changes) {
+                const stops = findStopsInWindow(parsed.rows, tOf(ch.old.time), tOf(ch.new.time));
+                // 窗口内只取最靠近窗口终点（新脸出现时刻）的那一次停靠
+                const chosen = pickClosestStop(stops, ch.new.time);
+                if (!chosen) {
+                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：窗口内无停靠段，跳过`);
+                    continue;
+                }
+                stopNo++;
+                const outPath = path.join(orderDir, `stop_${String(stopNo).padStart(3, '0')}.jpg`);
+                try {
+                    await composeFaceStopImage(
+                        [ch.old.path, ch.new.path],
+                        chosen, order.plate, parsed.header, parsed.headerStyles, parsed.widths, outPath, tmpDir
+                    );
+                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取最靠近 ${ch.new.time} 的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
+                } catch (err) {
+                    log(`停靠段拼图失败: ${err.message}`);
+                }
+            }
         }
 
         log(`共获取 ${totalScreenshots} 张截图，保存 ${totalFaces} 个不同人脸`);
@@ -125,6 +193,7 @@ async function runAutomation(options = {}, log = console.log) {
         log(`任务失败: ${err.message}`);
         return { success: false, error: err.message };
     } finally {
+        await closeWorker();
         await BrowserManager.close();
     }
 }

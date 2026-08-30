@@ -83,6 +83,7 @@ filterHeader.addEventListener('click', () => {
 const localFileInput = document.getElementById('local-file');
 const filePickBtn = document.getElementById('file-pick-btn');
 const fileNameEl = document.getElementById('file-name');
+let spreadsheetPath = ''; // 选中的表格文件绝对路径（供停靠段匹配读取）
 
 // 车牌号规整：沪X 前缀后加 -（如 沪EE2709 → 沪E-E2709）；已含 - 则保持不变
 function formatPlate(p) {
@@ -121,10 +122,20 @@ function parsePlateDateFromFilename(name) {
 }
 
 filePickBtn.addEventListener('click', () => localFileInput.click());
-localFileInput.addEventListener('change', () => {
+// 用文件名日期填充时间（缺时间按 0-24 点）
+function fillDatesFromFilename(parsed) {
+    if (!parsed || !parsed.date) return false;
+    const start = parsed.time ? `${parsed.date} ${parsed.time}` : `${parsed.date} 00:00:00`;
+    document.getElementById('start-date').value = start;
+    document.getElementById('end-date').value = `${parsed.date} 23:59:59`;
+    return true;
+}
+
+localFileInput.addEventListener('change', async () => {
     const f = localFileInput.files && localFileInput.files[0];
     if (!f) return;
     fileNameEl.textContent = f.name;
+    spreadsheetPath = window.electronAPI.getFilePath(f) || '';
     const parsed = parsePlateDateFromFilename(f.name);
     // 容错：只填充解析到的字段，解析不到的保留用户已有输入
     let filled = false;
@@ -132,11 +143,22 @@ localFileInput.addEventListener('change', () => {
         document.getElementById('plate').value = parsed.plate;
         filled = true;
     }
-    if (parsed && parsed.date) {
-        const start = parsed.time ? `${parsed.date} ${parsed.time}` : `${parsed.date} 00:00:00`;
-        document.getElementById('start-date').value = start;
-        document.getElementById('end-date').value = `${parsed.date} 23:59:59`;
-        filled = true;
+    // 时间：优先读取表格首行~末行的 GPS 时间；读取失败再回退用文件名日期
+    if (spreadsheetPath) {
+        try {
+            const range = await window.electronAPI.getSpreadsheetRange(spreadsheetPath);
+            if (range && !range.error && range.start && range.end) {
+                document.getElementById('start-date').value = range.start;
+                document.getElementById('end-date').value = range.end;
+                filled = true;
+            } else {
+                filled = fillDatesFromFilename(parsed) || filled;
+            }
+        } catch (e) {
+            filled = fillDatesFromFilename(parsed) || filled;
+        }
+    } else {
+        filled = fillDatesFromFilename(parsed) || filled;
     }
     if (!filled) {
         fileNameEl.textContent = '无法解析（文件名需包含 车牌 或 年月日）';
@@ -152,7 +174,8 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         endDate: document.getElementById('end-date').value,
         alarmTypes: readChecks('alarm-type-filters', parseInt),
         riskLevels: readChecks('risk-level-filters', parseInt),
-        repairStatus: readChecks('repair-status-filters', (v) => v)
+        repairStatus: readChecks('repair-status-filters', (v) => v),
+        spreadsheetPath: spreadsheetPath || ''
     };
 
     const btn = document.getElementById('start-btn');

@@ -124,16 +124,24 @@ class ServiceB {
         }
     }
 
-    // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL
+    // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL，并返回该行报警时间
     async collectRowPhotos(page, idx) {
-        // 读取该行“查看照片”按钮中的报警 id
-        const alarmId = await page.evaluate((i) => {
+        // 读取该行“查看照片”按钮中的报警 id 与整行报警时间
+        const rowInfo = await page.evaluate((i) => {
             const els = document.querySelectorAll('a[title="查看照片"]');
-            const onclick = els[i] ? els[i].getAttribute('onclick') : '';
-            const m = onclick && onclick.match(/'(\d+)'/);
-            return m ? m[1] : null;
+            const a = els[i];
+            if (!a) return null;
+            const onclick = a.getAttribute('onclick') || '';
+            const m = onclick.match(/'(\d+)'/);
+            const tr = a.closest('tr') || a.closest('.datagrid-row');
+            let time = '';
+            if (tr) {
+                const tm = (tr.textContent || '').match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+                if (tm) time = tm[1];
+            }
+            return { alarmId: m ? m[1] : null, time };
         }, idx);
-        if (!alarmId) return [];
+        if (!rowInfo || !rowInfo.alarmId) return { urls: [], time: '' };
 
         // 点击该行“查看照片”
         await page.evaluate((i) => {
@@ -142,8 +150,8 @@ class ServiceB {
         }, idx);
 
         // 等待详情 iframe 加载到当前报警
-        const frame = await waitDetailFrame(page, alarmId);
-        if (!frame) return [];
+        const frame = await waitDetailFrame(page, rowInfo.alarmId);
+        if (!frame) return { urls: [], time: rowInfo.time || '' };
 
         // 等待人脸截图出现（非站点本地资源的真实图片）
         try {
@@ -164,21 +172,21 @@ class ServiceB {
                 .map(im => im.src)
                 .filter(s => s && s.startsWith('http') && !s.startsWith(site) && !s.startsWith('data:'));
         });
-        return [...new Set(srcs)];
+        return { urls: [...new Set(srcs)], time: rowInfo.time || '' };
     }
 
-    // 采集当前页所有含“查看照片”的行的人脸截图
+    // 采集当前页所有含“查看照片”的行的人脸截图，返回 [{ urls, time }]
     async collectCurrentPagePhotos(page) {
         const photoCount = await page.evaluate(() => document.querySelectorAll('a[title="查看照片"]').length);
-        const urls = [];
+        const items = [];
         for (let i = 0; i < photoCount; i++) {
             try {
-                urls.push(...await this.collectRowPhotos(page, i));
+                items.push(await this.collectRowPhotos(page, i));
             } catch (e) {
                 this.log(`第 ${i + 1} 行获取照片失败: ${e.message}`);
             }
         }
-        return urls;
+        return items;
     }
 
     // 按车牌 + 起止时间查询报警数据，分页采集所有“查看照片”里的人脸截图 URL
@@ -237,7 +245,7 @@ class ServiceB {
         this.log(`${SITE_NAME}命中 ${pager.total} 条报警，共 ${pager.totalPages} 页`);
 
         // 逐页采集（第 1 页已加载；后续页点击“下一页”）
-        const urls = [];
+        const photos = []; // [{ url, time }]
         for (let pageNum = 1; pageNum <= pager.totalPages; pageNum++) {
             if (pageNum > 1) {
                 const prevInfo = await page.evaluate(() => (document.querySelector('.pagination-info') || {}).textContent || '');
@@ -256,13 +264,16 @@ class ServiceB {
                 ).catch(() => {});
                 await new Promise(r => setTimeout(r, 1500)); // 等待数据行渲染
             }
-            const pageUrls = await this.collectCurrentPagePhotos(page);
-            this.log(`第 ${pageNum} 页采集到 ${pageUrls.length} 张截图`);
-            urls.push(...pageUrls);
+            const pageItems = await this.collectCurrentPagePhotos(page);
+            const pageCount = pageItems.reduce((s, it) => s + it.urls.length, 0);
+            this.log(`第 ${pageNum} 页采集到 ${pageCount} 张截图`);
+            for (const item of pageItems) {
+                for (const url of item.urls) photos.push({ url, time: item.time });
+            }
         }
 
         await page.close();
-        return urls;
+        return photos;
     }
 }
 

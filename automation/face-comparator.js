@@ -56,8 +56,8 @@ class FaceComparator {
         const tensor = await this.loadImageTensor(imagePath);
         try {
             const options = new faceapi.TinyFaceDetectorOptions({
-                inputSize: 320,       // 输入尺寸（32 的倍数），越小越快
-                scoreThreshold: 0.5
+                inputSize: 416,       // 较大输入尺寸，能检出小/侧脸并给出可靠特征（如低置信度的人脸截图）
+                scoreThreshold: 0.3
             });
             const detection = await faceapi.detectSingleFace(tensor, options)
                 .withFaceLandmarks()
@@ -68,7 +68,8 @@ class FaceComparator {
         }
     }
 
-    // 对所有图片进行人脸聚类，返回每个不同人脸的一张代表图片路径
+    // 对人脸聚类，返回每个聚类的代表图与全部成员路径（供换脸检测选取具体截图）
+    // 返回形如 [{ representative, members: [imgPath...] }, ...]
     async clusterFaces(imagePaths) {
         await this.loadModels();
         const faceData = [];
@@ -102,7 +103,10 @@ class FaceComparator {
             }
         }
 
-        return clusters.map(c => c.representative);
+        return clusters.map(c => ({
+            representative: c.representative,
+            members: c.members
+        }));
     }
 }
 

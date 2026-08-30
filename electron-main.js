@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { runAutomation } = require('./automation/index');
 const BrowserManager = require('./automation/browser-manager');
+const { getSpreadsheetTimeRange } = require('./automation/stop-finder');
 
 // 跨平台打开目录：macOS 用 open 命令（能确保 Finder 弹出并置前）
 function openDirInOS(dir) {
@@ -31,6 +32,15 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
+// 读取表格首末行 GPS 时间，供渲染进程自动填充查询条件
+ipcMain.handle('get-spreadsheet-range', async (event, filePath) => {
+    try {
+        return getSpreadsheetTimeRange(filePath);
+    } catch (e) {
+        return { error: e.message };
+    }
+});
+
 // 监听来自渲染进程的“开始”请求
 ipcMain.handle('start-automation', async (event, payload) => {
     // 将日志发送到渲染进程
@@ -43,8 +53,8 @@ ipcMain.handle('start-automation', async (event, payload) => {
     // 输出目录可以动态设置，例如使用 app.getPath('documents')
     const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
 
-    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus } = payload;
-    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus }, log);
+    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath } = payload;
+    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath }, log);
     // 任务完成后自动打开保存目录（优先打开实际保存人脸的“车牌_日期”子目录）
     if (result.success && result.outputDir) {
         const openDir = (result.savedDirs && result.savedDirs.length)
