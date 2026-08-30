@@ -20,8 +20,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # tfjs-node 4.22 要求 Node >=20.19，且已知 Node 24 下异常，故固定用 20 LTS
-          node-version: 20
+          # 依赖对 Node 版本有硬性要求：electron 44 / puppeteer 25 / @electron/rebuild 4 需要 >=22.12，
+          # tfjs-node 4.22 需要 >=20.19.4，且已知 Node 24 下异常，故统一用 22 LTS（两者都满足）
+          node-version: 22
           cache: npm
 
       # windows-2022 自带 VS2022 C++ 构建工具与 Python，
@@ -31,7 +32,7 @@ jobs:
         env:
           npm_config_msvs_version: "2022"
 
-      # tfjs-node 在 Node 20（napi=9）下会把 tensorflow.dll 放错目录（lib/napi-v9），
+      # tfjs-node 会把 tensorflow.dll 放到 lib/napi-v<当前node版本>（Node 20 → napi-v9，Node 22 → napi-v10），
       # 而 tfjs_binding.node 实际在 lib/napi-v8，导致加载时找不到 DLL。
       # 这里把 tensorflow.dll 强制复制到绑定所在目录。
       - name: Fix tensorflow.dll placement
