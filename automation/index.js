@@ -122,19 +122,13 @@ async function runAutomation(options = {}, log = console.log) {
 
             // 该订单单独人脸聚类，返回每个聚类（不同人脸）及全部成员截图
             const clusters = await comparator.clusterFaces(driverPaths.map(x => x.path));
-            const representativePaths = clusters.map(c => c.representative);
             log(`车牌 ${order.plate} 识别出 ${clusters.length} 个不同人脸`);
             totalFaces += clusters.length;
 
-            // 保存到 output/<车牌>_<日期>/face_NNN.jpg（单层目录）
+            // 输出目录：output/<车牌>_<日期>（单层目录，人脸与停靠拼图都放这里）
             const orderDir = path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10));
             fs.ensureDirSync(orderDir);
             savedDirs.push(orderDir);
-            for (let i = 0; i < representativePaths.length; i++) {
-                const outputPath = path.join(orderDir, `face_${String(i + 1).padStart(3, '0')}.jpg`);
-                await compressToJpg(representativePaths[i], outputPath, 3);
-                log(`保存: ${outputPath}`);
-            }
 
             // 表格停靠段匹配（换脸时刻）：按时间顺序汇总每个聚类的成员出现时间，
             // 相邻出现的人脸属于不同聚类即“换脸”事件；每次换脸以 旧脸最后一次出现 + 新脸第一次出现 为窗口，
@@ -158,6 +152,24 @@ async function runAutomation(options = {}, log = console.log) {
             if (changes.length === 0) {
                 log('未检测到换脸事件，跳过停靠段匹配');
                 continue;
+            }
+
+            // 单独保存的人脸截图 = 拼图中用到的换脸人脸（旧脸最后一次出现 + 新脸第一次出现），按出现顺序去重后按时间排序
+            const faceSet = [];
+            const seenPaths = new Set();
+            for (const ch of changes) {
+                for (const fc of [ch.old, ch.new]) {
+                    if (!seenPaths.has(fc.path)) {
+                        seenPaths.add(fc.path);
+                        faceSet.push(fc);
+                    }
+                }
+            }
+            faceSet.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+            for (let i = 0; i < faceSet.length; i++) {
+                const outputPath = path.join(orderDir, `face_${String(i + 1).padStart(3, '0')}.jpg`);
+                await compressToJpg(faceSet[i].path, outputPath, 3);
+                log(`保存: ${outputPath}（${faceSet[i].time}）`);
             }
 
             const parsed = readSpreadsheet(spreadsheetPath);
