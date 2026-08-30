@@ -12,7 +12,7 @@ const path = require('path');
 const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
-    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, headless } = options;
+    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath } = options;
 
     // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
     const ENABLE_SERVICE_A = false;
@@ -22,12 +22,9 @@ async function runAutomation(options = {}, log = console.log) {
 
     try {
         log('开始自动化流程...');
-        // 默认以无头模式启动；用户在界面勾选“显示浏览器窗口”时以有头模式启动。
-        // 会话仍有效则全程后台运行；检测到需要登录时才切换为可见窗口
-        await BrowserManager.launch(headless !== false);
-        log(headless === false
-            ? '浏览器已以可见窗口模式启动（可在窗口中观察运行过程）'
-            : '浏览器已以无头模式启动（已登录则全程后台运行；需要登录时自动弹出可见窗口）');
+        // 登录需用户手动在浏览器窗口中操作，必须使用可见窗口（有头模式）
+        await BrowserManager.launch(false);
+        log('浏览器已启动（请在弹出的窗口手动登录）');
 
         // 组装待处理订单：填写了车牌则跳过道路运输车辆运营监测分析应用，直接查询运输车辆监控平台
         const today = () => {
@@ -171,12 +168,8 @@ async function runAutomation(options = {}, log = console.log) {
             faceSet.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
             for (let i = 0; i < faceSet.length; i++) {
                 const outputPath = path.join(orderDir, `face_${String(i + 1).padStart(3, '0')}.jpg`);
-                try {
-                    await compressToJpg(faceSet[i].path, outputPath, 3);
-                    log(`保存: ${outputPath}（${faceSet[i].time}）`);
-                } catch (err) {
-                    log(`保存人脸失败: ${outputPath} - ${err.message}`);
-                }
+                await compressToJpg(faceSet[i].path, outputPath, 3);
+                log(`保存: ${outputPath}（${faceSet[i].time}）`);
             }
 
             const parsed = readSpreadsheet(spreadsheetPath);
