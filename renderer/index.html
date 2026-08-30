@@ -24,6 +24,15 @@
                 </div>
                 <div class="field-grid">
                     <div class="field field-full">
+                        <label for="local-file">本地表格文件（可选）</label>
+                        <div class="file-picker">
+                            <input type="file" id="local-file" accept=".xls,.xlsx,.xlsm,.csv" hidden>
+                            <button type="button" id="file-pick-btn" class="secondary-btn">选择文件…</button>
+                            <span id="file-name" class="file-name">未选择</span>
+                        </div>
+                        <small class="filter-tip">选择后自动解析文件名中的车牌号与日期并填入（如 沪EE2709_2026_08_27(1).xls → 沪E-E2709 / 2026-08-27 00:00:00 ~ 23:59:59）</small>
+                    </div>
+                    <div class="field field-full">
                         <label for="plate">车牌号</label>
                         <input type="text" id="plate" placeholder="填写后跳过道路运输车辆运营监测分析应用，直接查询运输车辆监控平台" autocomplete="off">
                     </div>

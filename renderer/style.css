@@ -175,6 +175,40 @@ body {
     color: #aab4c0;
 }
 
+/* 文件选择 */
+.file-picker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.secondary-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #357abd;
+    background: #eef4fb;
+    border: 1px solid #cfe0f1;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.secondary-btn:hover {
+    background: #e0edf9;
+}
+
+.file-name {
+    font-size: 12px;
+    color: #8892a0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
 /* 筛选条件 */
 .filter-section-title {
     font-size: 13px;
