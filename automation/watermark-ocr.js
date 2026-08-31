@@ -47,11 +47,11 @@ async function getWorker() {
     if (worker) return worker;
     if (!workerReady) {
         workerReady = (async () => {
-            // digits + 时间分隔符白名单，只识别时间，提高准确率与速度
+            // 数字 + 时间/速度分隔符白名单（km/h 的字母也放行，供速度水印识别）
             const w = await createWorker('eng', 1, {
                 langPath: findLangDir(),
                 corePath: findCoreDir(),
-                tessedit_char_whitelist: '0123456789-: ',
+                tessedit_char_whitelist: '0123456789-: .kmhKMG',
                 tessedit_pageseg_mode: '7'
             });
             return w;
@@ -72,8 +72,11 @@ async function closeWorker() {
 // 从识别文本中提取 "YYYY-MM-DD HH:MM:SS"；容忍 -/–/—/./ 等分隔符
 function parseTime(text) {
     const s = String(text || '').replace(/[–—–]/g, '-');
-    const m = s.match(/(\d{4})\s*[-\s./]\s*(\d{1,2})\s*[-\s./]\s*(\d{1,2})\s*[\s\-–—.]*(\d{1,2})\s*[:：.\s]\s*(\d{1,2})\s*[:：.\s]\s*(\d{1,2})/);
+    const m = s.match(/(\d{4})\s*[-\s./]\s*(\d{1,2})\s*[-\s./]\s*(\d{1,2})\s*[\s\-–.]*\s*(\d{1,2})\s*[:：.\s]\s*(\d{1,2})\s*[:：.\s]\s*(\d{1,2})/);
     if (!m) return null;
+    // 年份异常多为误识别（如把 2026 认成 1026），返回 null 回退报警行时间
+    const year = Number(m[1]);
+    if (year < 2000 || year > 2099) return null;
     const pad = (n) => String(n).padStart(2, '0');
     const out = `${m[1]}-${pad(m[2])}-${pad(m[3])} ${pad(m[4])}:${pad(m[5])}:${pad(m[6])}`;
     if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(out)) return null;
@@ -119,4 +122,66 @@ async function readWatermarkTime(imagePath) {
     return tGray;
 }
 
-module.exports = { readWatermarkTime, closeWorker };
+// 将灰度 buffer 做“极性自适应二值化”（深字浅底自动反相再阈值化），返回 PNG buffer
+function binarizeBuffer(gray) {
+    const gd = gray.data, gw = gray.info.width, gh = gray.info.height;
+    let gsum = 0;
+    for (let i = 0; i < gd.length; i++) gsum += gd[i];
+    const invert = (gsum / gd.length) > 128;
+    const bin = Buffer.alloc(gw * gh);
+    for (let i = 0; i < gd.length; i++) {
+        const v = invert ? 255 - gd[i] : gd[i];
+        bin[i] = v > 128 ? 255 : 0;
+    }
+    return sharp(bin, { raw: { width: gw, height: gh, channels: 1 } });
+}
+
+// 识别右下角速度水印（格式如 "G：71km/h"），返回数字（0 表示静止）；识别失败返回 null
+async function readWatermarkSpeed(imagePath) {
+    try {
+        const w = await getWorker();
+        const meta = await sharp(imagePath).metadata();
+        if (!meta.width || !meta.height) return null;
+        // 速度水印位于右下角：右侧 25% 宽、底部 12% 高
+        const left = Math.round(meta.width * 0.75);
+        const top = Math.round(meta.height * 0.88);
+        const cropW = meta.width - left;
+        const cropH = meta.height - top;
+        if (cropW <= 0 || cropH <= 0) return null;
+
+        // 变体2（优先）：极性自适应二值化，显著提升浅底/低对比下对 0 的识别
+        const gray = await sharp(imagePath)
+            .extract({ left, top, width: cropW, height: cropH })
+            .grayscale().raw().toBuffer({ resolveWithObject: true });
+        const bufBin = await binarizeBuffer(gray)
+            .resize({ width: cropW * 3, height: cropH * 3, kernel: 'lanczos3' })
+            .png().toBuffer();
+        const sBin = parseSpeed((await w.recognize(bufBin)).data.text);
+        if (sBin !== null) return sBin;
+
+        // 变体1（兜底）：灰度+归一化
+        const bufGray = await sharp(imagePath)
+            .extract({ left, top, width: cropW, height: cropH })
+            .resize({ width: cropW * 3, height: cropH * 3, kernel: 'lanczos3' })
+            .grayscale().normalize().toBuffer();
+        return parseSpeed((await w.recognize(bufGray)).data.text);
+    } catch (e) {
+        return null; // 识别失败不强制丢弃
+    }
+}
+
+// 从识别文本中提取速度数值；取 "km/h" 前面的数字（前面的 G 等字符不固定，只看数字+km/h）
+function parseSpeed(text) {
+    let s = String(text || '');
+    // OCR 常把数字 0 识别成字母 O/o，先统一回填为 0（"Okm/h" => "0km/h"）
+    s = s.replace(/O/g, '0').replace(/o/g, '0');
+    // 只认紧跟 km/km/h 的数字（\s 兼容空格/换行）
+    const m = s.match(/(\d+(?:\.\d+)?)\s*[kK]\s*[mM]/);
+    if (m) {
+        const v = parseFloat(m[1]);
+        if (Number.isFinite(v)) return v;
+    }
+    return null;
+}
+
+module.exports = { readWatermarkTime, readWatermarkSpeed, closeWorker };

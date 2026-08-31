@@ -53,8 +53,8 @@ ipcMain.handle('start-automation', async (event, payload) => {
     // 输出目录可以动态设置，例如使用 app.getPath('documents')
     const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
 
-    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath } = payload;
-    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath }, log);
+    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold } = payload;
+    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold }, log);
     // 任务完成后自动打开保存目录（优先打开实际保存人脸的“车牌_日期”子目录）
     if (result.success && result.outputDir) {
         const openDir = (result.savedDirs && result.savedDirs.length)

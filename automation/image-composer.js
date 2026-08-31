@@ -84,16 +84,17 @@ async function composeFaceStopImage(facePaths, seg, plate, header, headerStyles,
             return `<div class="face"><img src="data:image/jpeg;base64,${b64}"></div>`;
         }).join('');
 
-    const colgroup = widths.map(w => `<col${w ? ` style="width:${w}px"` : ''}>`).join('');
-    const ths = header.map((h, c) => {
+    const extWidths = [null, ...widths]; // 第一列"序号"列宽自适应
+    const colgroup = extWidths.map(w => `<col${w ? ` style="width:${w}px"` : ''}>`).join('');
+    const ths = [`<th>序号</th>`, ...header.map((h, c) => {
         const css = styleToCss(headerStyles[c]);
         return `<th${css ? ` style="${css}"` : ''}>${escapeHtml(h)}</th>`;
-    }).join('');
+    })].join('');
     const rowsHtml = seg.rows.map((r) => {
-        const tds = r.cells.map((v, c) => {
+        const tds = [`<td>${escapeHtml(String(r.rowIndex != null ? r.rowIndex : ''))}</td>`, ...r.cells.map((v, c) => {
             const css = styleToCss(r.styles[c]);
             return `<td${css ? ` style="${css}"` : ''}>${escapeHtml(v)}</td>`;
-        }).join('');
+        })].join('');
         return `<tr>${tds}</tr>`;
     }).join('');
 

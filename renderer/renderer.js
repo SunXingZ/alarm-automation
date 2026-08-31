@@ -79,6 +79,14 @@ filterHeader.addEventListener('click', () => {
     filterHeader.classList.toggle('open', !open);
 });
 
+// 人脸同一人判定阈值滑块（欧氏距离，显示当前值）
+const thresholdSlider = document.getElementById('face-threshold');
+const thresholdValue = document.getElementById('face-threshold-value');
+const clampThreshold = (v) => Math.min(0.65, Math.max(0.40, Number(v)));
+thresholdSlider.addEventListener('input', () => {
+    thresholdValue.textContent = clampThreshold(thresholdSlider.value).toFixed(2);
+});
+
 // 本地表格文件：解析文件名中的车牌号与日期并自动填入查询条件
 const localFileInput = document.getElementById('local-file');
 const filePickBtn = document.getElementById('file-pick-btn');
@@ -175,7 +183,8 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         alarmTypes: readChecks('alarm-type-filters', parseInt),
         riskLevels: readChecks('risk-level-filters', parseInt),
         repairStatus: readChecks('repair-status-filters', (v) => v),
-        spreadsheetPath: spreadsheetPath || ''
+        spreadsheetPath: spreadsheetPath || '',
+        faceThreshold: clampThreshold(thresholdSlider.value)
     };
 
     const btn = document.getElementById('start-btn');

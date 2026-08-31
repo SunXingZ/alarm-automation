@@ -73,6 +73,21 @@
                 </div>
             </div>
 
+            <!-- 人脸识别设置 -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>人脸识别设置</h2>
+                </div>
+                <div class="field">
+                    <div class="slider-row">
+                        <label for="face-threshold">同一人判定阈值（欧氏距离）</label>
+                        <span id="face-threshold-value" class="slider-value">0.45</span>
+                    </div>
+                    <input type="range" id="face-threshold" min="0.40" max="0.65" step="0.01" value="0.45">
+                    <small class="filter-tip">值越小判定越严格（不同人不易误并，但同一人正/侧脸可能被拆开 → 多报换脸）；值越大越宽松（同一人易合并，但不同人可能误判为同一人 → 漏报换脸）。默认 0.45，按实际抓拍数据校准（同一人距离多在 0.2~0.47，不同人 ≥0.52）。</small>
+                </div>
+            </div>
+
             <button id="start-btn" class="primary-btn">
                 <span class="btn-icon">▶</span>
                 <span class="btn-text">开始自动化</span>

@@ -52,6 +52,7 @@ function readSpreadsheet(filePath) {
         const d = new Date(timeStr.replace(' ', 'T'));
         if (isNaN(d.getTime())) continue;
         data.push({
+            rowIndex: r + 1, // Excel 显示的 1-based 行号（grid[r] 对应 Excel 第 r+1 行）
             time: d,
             timeStr,
             speed: parseFloat(text(row[iSpeed])) || 0,
@@ -124,6 +125,20 @@ function pickClosestStop(stops, endTimeStr) {
     return best;
 }
 
+// 查某时刻的速度：取表格中时间最接近的行（限 maxGapSec 秒内），返回速度或 null
+function findSpeedAtTime(rows, timeStr, maxGapSec = 60) {
+    const t = new Date(String(timeStr || '').replace(' ', 'T')).getTime();
+    if (isNaN(t)) return null;
+    let best = null;
+    let bestDist = Infinity;
+    for (const r of rows) {
+        const dist = Math.abs(r.time.getTime() - t);
+        if (dist < bestDist) { bestDist = dist; best = r; }
+    }
+    if (!best || bestDist > maxGapSec * 1000) return null;
+    return best.speed;
+}
+
 // 主入口：给定表格文件与（已升序的）人脸时间点数组，
 // 相邻人脸时间构成窗口，返回每个窗口内的停靠段
 function findStopsForFaceTimes(filePath, faceTimes) {
@@ -162,4 +177,4 @@ function getSpreadsheetTimeRange(filePath) {
     };
 }
 
-module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange };
+module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange, findSpeedAtTime };

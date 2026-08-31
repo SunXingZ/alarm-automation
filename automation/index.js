@@ -4,15 +4,15 @@ const ServiceB = require('./service-b');
 const FaceComparator = require('./face-comparator');
 const { isDriverScreenshot } = require('./driver-face-filter');
 const { downloadImage, compressToJpg } = require('./image-saver');
-const { readSpreadsheet, findStopsInWindow, pickClosestStop } = require('./stop-finder');
+const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime } = require('./stop-finder');
 const { composeFaceStopImage } = require('./image-composer');
-const { readWatermarkTime, closeWorker } = require('./watermark-ocr');
+const { readWatermarkTime, readWatermarkSpeed, closeWorker } = require('./watermark-ocr');
 const fs = require('fs-extra');
 const path = require('path');
 const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
-    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath } = options;
+    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold } = options;
 
     // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
     const ENABLE_SERVICE_A = false;
@@ -51,7 +51,7 @@ async function runAutomation(options = {}, log = console.log) {
 
         // 运输车辆监控平台：查询并下载截图（登录由用户手动完成，登录后自动继续）
         const serviceB = new ServiceB(log);
-        const comparator = new FaceComparator();
+        const comparator = new FaceComparator({ distanceThreshold: faceThreshold });
         // 临时目录必须放可写位置（userData），打包后 __dirname 在只读 app.asar 内
         const tmpDir = path.join(app.getPath('userData'), 'tmp_screenshots');
         fs.ensureDirSync(tmpDir);
@@ -105,7 +105,7 @@ async function runAutomation(options = {}, log = console.log) {
             log(`车牌 ${order.plate} 司机截图 ${driverPaths.length}/${localPaths.length} 张`);
             if (driverPaths.length === 0) continue;
 
-            // 用截图水印上的“抓拍时间”覆盖报警行解析的时间：两者可能不一致，
+            // 用截图水印上的"抓拍时间"覆盖报警行解析的时间：两者可能不一致，
             // 水印时间与 GPS 轨迹表同源，是匹配停靠段的正确依据（否则停靠段会落在人脸时间范围外）
             for (const item of driverPaths) {
                 try {
@@ -120,8 +120,41 @@ async function runAutomation(options = {}, log = console.log) {
                 }
             }
 
+            // 提前解析表格（供速度过滤交叉验证与后续停靠段匹配共用）
+            const parsed = spreadsheetPath ? readSpreadsheet(spreadsheetPath) : null;
+            if (parsed && parsed.error) {
+                log(`解析表格失败: ${parsed.error}`);
+            }
+
+            // 右下角速度水印为 0（车静止，司机可能在摄像头外）则丢弃该截图。
+            // 优先用表格交叉验证（水印时间与 GPS 轨迹同源，秒级精确，比小字 OCR 可靠）；
+            // 表格匹配不到时才回退 OCR 右下角速度水印
+            const speedRows = parsed && !parsed.error ? parsed.rows : null;
+            const validDriverPaths = [];
+            for (const item of driverPaths) {
+                let speed = null;
+                if (speedRows) {
+                    speed = findSpeedAtTime(speedRows, item.time, 60);
+                }
+                if (speed === null) {
+                    try {
+                        speed = await readWatermarkSpeed(item.path);
+                    } catch (err) {
+                        log(`速度水印识别异常，保留: ${path.basename(item.path)} - ${err.message}`);
+                    }
+                }
+                if (speed !== null && speed < 0.5) {
+                    log(`速度为 0 丢弃: ${path.basename(item.path)}`);
+                    fs.removeSync(item.path);
+                    continue;
+                }
+                validDriverPaths.push(item);
+            }
+            log(`车牌 ${order.plate} 速度过滤后剩余 ${validDriverPaths.length}/${driverPaths.length} 张`);
+            if (validDriverPaths.length === 0) continue;
+
             // 该订单单独人脸聚类，返回每个聚类（不同人脸）及全部成员截图
-            const clusters = await comparator.clusterFaces(driverPaths.map(x => x.path));
+            const clusters = await comparator.clusterFaces(validDriverPaths.map(x => x.path), log);
             log(`车牌 ${order.plate} 识别出 ${clusters.length} 个不同人脸`);
             totalFaces += clusters.length;
 
@@ -134,7 +167,7 @@ async function runAutomation(options = {}, log = console.log) {
             // 相邻出现的人脸属于不同聚类即“换脸”事件；每次换脸以 旧脸最后一次出现 + 新脸第一次出现 为窗口，
             // 在表格内找 0 速段及前后 >0 速行，各生成一张拼图
             if (!spreadsheetPath) continue;
-            const timeByPath = new Map(driverPaths.map(x => [x.path, x.time]));
+            const timeByPath = new Map(validDriverPaths.map(x => [x.path, x.time]));
             const occ = [];
             clusters.forEach((c, ci) => {
                 for (const p of c.members) {
@@ -172,8 +205,7 @@ async function runAutomation(options = {}, log = console.log) {
                 log(`保存: ${outputPath}（${faceSet[i].time}）`);
             }
 
-            const parsed = readSpreadsheet(spreadsheetPath);
-            if (parsed.error) { log(`解析表格失败: ${parsed.error}`); continue; }
+            if (!parsed || parsed.error) { log('表格不可用，跳过停靠段拼图'); continue; }
             const tOf = (s) => new Date(String(s).replace(' ', 'T'));
             let stopNo = 0;
             for (const ch of changes) {
