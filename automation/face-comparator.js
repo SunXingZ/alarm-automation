@@ -90,14 +90,24 @@ class FaceComparator {
             : 1.00;
     }
 
+    // 模型目录：打包后在 resources/models/insightface（extraResources 直接复制，不受 asar 影响）；
+    // 开发态在项目根 models/insightface
+    resolveModelDir() {
+        try {
+            const packaged = path.join(process.resourcesPath, 'models', 'insightface');
+            if (fs.existsSync(path.join(packaged, 'det_10g.onnx'))) return packaged;
+        } catch (e) { /* 非 electron 环境无 process.resourcesPath */ }
+        return path.join(__dirname, '..', 'models', 'insightface');
+    }
+
     async loadModels() {
         if (this.modelLoaded) return;
+        this.modelPath = this.resolveModelDir();
         const detPath = path.join(this.modelPath, 'det_10g.onnx');
         const recPath = path.join(this.modelPath, 'w600k_r50.onnx');
         if (!fs.existsSync(detPath) || !fs.existsSync(recPath)) {
-            throw new Error('未找到人脸识别模型文件（models/insightface/det_10g.onnx 与 w600k_r50.onnx）');
+            throw new Error('未找到人脸识别模型文件（models/insightface/det_10g.onnx 与 w600k_r50.onnx），请先运行 npm run download-models');
         }
-        // 用 buffer 加载：打包后模型在 asar 内，fs.readFileSync 可读但原生库不能直接拿 asar 虚拟路径
         this.detSession = await ort.InferenceSession.create(fs.readFileSync(detPath));
         this.recSession = await ort.InferenceSession.create(fs.readFileSync(recPath));
         this.modelLoaded = true;

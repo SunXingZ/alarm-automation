@@ -24,8 +24,13 @@
       "electron-main.js",
       "preload.js",
       "renderer/**/*",
-      "automation/**/*",
-      "models/**/*"
+      "automation/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "models/insightface",
+        "to": "models/insightface"
+      }
     ],
     "asarUnpack": [
       "**/node_modules/onnxruntime-node/**",
