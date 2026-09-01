@@ -20,54 +20,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # 依赖对 Node 版本有硬性要求：electron 44 / puppeteer 25 / @electron/rebuild 4 需要 >=22.12，
-          # tfjs-node 4.22 需要 >=20.19.4，且已知 Node 24 下异常，故统一用 22 LTS（两者都满足）
+          # 依赖对 Node 版本有硬性要求：electron 44 / puppeteer 25 需要 >=22.12，统一用 22 LTS。
+          # 人脸识别已迁移到 onnxruntime-node（N-API，跨 Node/Electron 版本 ABI 稳定），
+          # 不再有 tfjs-node 的 tensorflow.dll 版本兼容问题
           node-version: 22
           cache: npm
 
-      # windows-2022 自带 VS2022 C++ 构建工具与 Python，
-      # 可在此直接源码编译 tfjs-node 的 win32-x64 原生绑定
       - name: Install dependencies
         run: npm ci
         env:
           npm_config_msvs_version: "2022"
 
-      # tfjs-node 会把 tensorflow.dll 放到 lib/napi-v<当前node版本>（Node 20 → napi-v9，Node 22 → napi-v10），
-      # 而 tfjs_binding.node 实际在 lib/napi-v8，导致加载时找不到 DLL。
-      # 这里把 tensorflow.dll 强制复制到绑定所在目录。
-      - name: Fix tensorflow.dll placement
-        shell: pwsh
-        run: |
-          $binding = Get-ChildItem "node_modules\@tensorflow\tfjs-node\lib" -Recurse -Filter "tfjs_binding.node" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $binding) {
-            Write-Host "tfjs_binding.node not found"
-            exit 1
-          }
-          Get-ChildItem "node_modules\@tensorflow\tfjs-node" -Recurse -Filter "tensorflow.dll" -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $binding.DirectoryName -Force -ErrorAction SilentlyContinue
-          Write-Host "tensorflow.dll -> $($binding.DirectoryName)"
-          Get-ChildItem $binding.DirectoryName | Select-Object -ExpandProperty Name
+      # 人脸识别模型不入库（174MB 超 GitHub 单文件上限），构建时下载
+      - name: Download face recognition models
+        run: npm run download-models
 
-      # 目标 Windows 电脑可能没装 VC++ 运行库，把 VS 运行库 DLL 复制到
-      # tfjs_binding.node 同目录，保证任何机器都能加载（找不到源文件则跳过）
-      - name: Bundle VC++ runtime DLLs
-        shell: pwsh
-        run: |
-          $dst = "node_modules\@tensorflow\tfjs-node\lib\napi-v8"
-          if (Test-Path $dst) {
-            Get-ChildItem "node_modules\electron\dist" -Filter "*.dll" -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match "^(vcruntime140|vcruntime140_1|msvcp140|concrt140)" } |
-              Copy-Item -Destination $dst -Force -ErrorAction SilentlyContinue
-            Write-Host "runtime DLLs in tfjs-node napi dir:"
-            Get-ChildItem $dst -Filter "*.dll" | Select-Object -ExpandProperty Name
-          } else {
-            Write-Host "tfjs-node napi dir not found: $dst"
-          }
-
-      # 构建前自检：确认 sharp / tfjs-node 两个原生模块在 Windows 上可正常加载
+      # 构建前自检：确认 sharp / onnxruntime-node 两个原生模块在 Windows 上可正常加载
       - name: Verify native modules load
         run: >-
-          node -e "require('sharp'); require('@tensorflow/tfjs-node'); console.log('native modules OK: sharp + tfjs-node')"
+          node -e "require('sharp'); require('onnxruntime-node'); console.log('native modules OK: sharp + onnxruntime-node')"
 
       - name: Build Windows installer
         # --publish never：只构建，不发布到 GitHub Releases（避免需要 GH_TOKEN）
@@ -76,26 +47,37 @@ jobs:
           # 跳过代码签名（未配置证书）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      # 打包后校验：确认原生 .node 与依赖 DLL 被正确解出 asar（否则 Windows 无法加载）
+      # 打包后校验：确认原生 .node 与模型文件被正确解出 asar（否则 Windows 无法加载）
       - name: Verify native files unpacked from asar
         shell: pwsh
         run: |
           $required = @(
-            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@tensorflow\tfjs-node\lib\napi-v8\tfjs_binding.node",
-            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@tensorflow\tfjs-node\lib\napi-v8\tensorflow.dll",
+            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\onnxruntime-node\bin\napi-v6\win32\x64\onnxruntime_node.dll",
             "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@img\sharp-win32-x64\lib\sharp-win32-x64-0.35.4.node"
           )
+          $found = $false
           foreach ($f in $required) {
-            if (Test-Path $f) { Write-Host "OK: $f" }
+            if (Test-Path $f) { Write-Host "OK: $f"; if ($f -match "onnxruntime") { $found = $true } }
             else { Write-Host "MISSING: $f"; exit 1 }
           }
+          # onnxruntime_node 的实际 .node/.dll 路径可能随版本变化，找不到固定路径时
+          # 检查目录内是否有任意 onnxruntime 原生二进制
+          if (-not $found) {
+            $hit = Get-ChildItem "dist\win-unpacked\resources\app.asar.unpacked\node_modules\onnxruntime-node" -Recurse -Include "*.node","*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { Write-Host "OK (alternate path): $($hit.FullName)" }
+            else { Write-Host "MISSING: onnxruntime native binary"; exit 1 }
+          }
+          # 模型在 asar 内（用 buffer 加载），校验其在包内存在
+          $model = "dist\win-unpacked\resources\app.asar"
+          if (Test-Path $model) { Write-Host "OK: app.asar exists" }
+          else { Write-Host "MISSING: app.asar"; exit 1 }
 
-      # 用 Electron 内置的 Node（与应用完全相同的运行时）实际加载两个原生模块，
-      # 验证打包进 app.asar.unpacked 的二进制确实可在 Windows 下加载
+      # 用 Electron 内置的 Node（与应用完全相同的运行时）实际加载原生模块，
+      # 验证打包后的二进制确实可在 Windows 下加载
       - name: Smoke test native modules under Electron runtime
         shell: pwsh
         run: |
-          Set-Content -Path smoke.js -Value "const sharp = require('sharp'); require('@tensorflow/tfjs-node'); console.log('Electron smoke OK: sharp + tfjs-node under electron ' + process.versions.electron); process.exit(0);"
+          Set-Content -Path smoke.js -Value "const sharp = require('sharp'); const ort = require('onnxruntime-node'); console.log('Electron smoke OK: sharp + onnxruntime-node under electron ' + process.versions.electron); process.exit(0);"
           $env:ELECTRON_RUN_AS_NODE = "1"
           npx electron smoke.js
           $code = $LASTEXITCODE

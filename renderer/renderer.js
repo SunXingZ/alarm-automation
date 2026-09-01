@@ -82,7 +82,7 @@ filterHeader.addEventListener('click', () => {
 // 人脸同一人判定阈值滑块（欧氏距离，显示当前值）
 const thresholdSlider = document.getElementById('face-threshold');
 const thresholdValue = document.getElementById('face-threshold-value');
-const clampThreshold = (v) => Math.min(0.65, Math.max(0.40, Number(v)));
+const clampThreshold = (v) => Math.min(1.40, Math.max(0.70, Number(v)));
 thresholdSlider.addEventListener('input', () => {
     thresholdValue.textContent = clampThreshold(thresholdSlider.value).toFixed(2);
 });
