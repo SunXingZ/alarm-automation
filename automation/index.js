@@ -52,9 +52,28 @@ async function runAutomation(options = {}, log = console.log) {
         // 运输车辆监控平台：查询并下载截图（登录由用户手动完成，登录后自动继续）
         const serviceB = new ServiceB(log);
         const comparator = new FaceComparator({ distanceThreshold: faceThreshold });
-        // 临时目录必须放可写位置（userData），打包后 __dirname 在只读 app.asar 内
-        const tmpDir = path.join(app.getPath('userData'), 'tmp_screenshots');
-        fs.ensureDirSync(tmpDir);
+        // 临时目录必须放可写位置（打包后 __dirname 在只读 app.asar 内）。
+        // 优先 userData；若被杀软/权限锁住（Windows EPERM 常见），依次降级 os.tmpdir() / 输出目录
+        const pickWritableDir = (candidates) => {
+            for (const dir of candidates) {
+                try {
+                    fs.ensureDirSync(dir);
+                    const probe = path.join(dir, `.write_probe_${Date.now()}`);
+                    fs.writeFileSync(probe, 'ok');
+                    fs.removeSync(probe);
+                    return dir;
+                } catch (e) { /* 该目录不可写，尝试下一个 */ }
+            }
+            throw new Error('没有可用的临时目录（userData / 系统临时目录 / 输出目录均不可写）');
+        };
+        const tmpDir = pickWritableDir([
+            path.join(app.getPath('userData'), 'tmp_screenshots'),
+            path.join(require('os').tmpdir(), 'alarm-automation-tmp'),
+            path.join(outputDir, 'tmp_screenshots')
+        ]);
+        if (!tmpDir.includes(app.getPath('userData'))) {
+            log(`警告：默认临时目录不可写，已降级使用: ${tmpDir}`);
+        }
         fs.ensureDirSync(outputDir);
 
         // 目录名安全化（去除路径非法字符）
@@ -96,7 +115,7 @@ async function runAutomation(options = {}, log = console.log) {
                     if (await isDriverScreenshot(item.path)) {
                         driverPaths.push(item);
                     } else {
-                        fs.removeSync(item.path); // 删除非司机截图，减少后续比对量
+                        try { fs.removeSync(item.path); } catch (e) { /* 删除失败不阻塞流程 */ } // 删除非司机截图，减少后续比对量
                     }
                 } catch (err) {
                     log(`司机截图判定失败: ${item.path} - ${err.message}`);
@@ -145,7 +164,7 @@ async function runAutomation(options = {}, log = console.log) {
                 }
                 if (speed !== null && speed < 0.5) {
                     log(`速度为 0 丢弃: ${path.basename(item.path)}`);
-                    fs.removeSync(item.path);
+                    try { fs.removeSync(item.path); } catch (e) { /* 文件被占用时不阻塞流程 */ }
                     continue;
                 }
                 validDriverPaths.push(item);
@@ -158,9 +177,42 @@ async function runAutomation(options = {}, log = console.log) {
             log(`车牌 ${order.plate} 识别出 ${clusters.length} 个不同人脸`);
             totalFaces += clusters.length;
 
-            // 输出目录：output/<车牌>_<日期>（单层目录，人脸与停靠拼图都放这里）
-            const orderDir = path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10));
-            fs.ensureDirSync(orderDir);
+            // 输出目录：output/<车牌>_<日期>（单层目录，人脸与停靠拼图都放这里）。
+            // 创建失败（目录被杀软/云盘同步/占用短暂锁定）时兜底重试并换目录名，保证每个车牌都不漏
+            const makeOrderDir = (dir) => {
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        fs.ensureDirSync(dir);
+                        return dir;
+                    } catch (err) {
+                        if (attempt === 2) throw err;
+                        // Windows 下目录常被短暂锁定，等待后重试
+                        require('child_process').execSync(
+                            process.platform === 'win32' ? 'ping -n 2 127.0.0.1 >nul' : 'sleep 1'
+                        );
+                    }
+                }
+            };
+            let orderDir;
+            try {
+                orderDir = makeOrderDir(path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10)));
+            } catch (err) {
+                log(`输出目录创建失败（${err.message}），尝试备用目录`);
+                try {
+                    // 备用1：输出目录下换一个子目录名（避免与被占用的旧目录冲突）
+                    orderDir = makeOrderDir(path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10) + '_' + Date.now()));
+                } catch (err2) {
+                    try {
+                        // 备用2：直接写输出根目录（保证该车牌的结果一定保存）
+                        fs.ensureDirSync(outputDir);
+                        orderDir = outputDir;
+                        log(`备用目录也不可用，直接保存到输出根目录: ${outputDir}`);
+                    } catch (err3) {
+                        log(`车牌 ${order.plate} 所有输出目录均不可用，跳过: ${err3.message}`);
+                        continue;
+                    }
+                }
+            }
             savedDirs.push(orderDir);
 
             // 表格停靠段匹配（换脸时刻）：按时间顺序汇总每个聚类的成员出现时间，

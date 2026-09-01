@@ -1,13 +1,31 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { app } = require('electron');
 
 // 浏览器持久化数据目录：保存登录态，之后运行无需重复登录。
 // 必须放在可写目录（app.getPath('userData')）——打包后 __dirname 位于只读的
 // app.asar 内，不能把登录态写进 asar。
+// 若 userData 被杀软/权限锁住（Windows EPERM），降级到系统临时目录（登录态不持久，但流程可用）
+let warned = false;
 function getUserDataDir() {
-    return path.join(app.getPath('userData'), 'chrome-profile');
+    const preferred = path.join(app.getPath('userData'), 'chrome-profile');
+    try {
+        fs.mkdirSync(preferred, { recursive: true });
+        const probe = path.join(preferred, `.write_probe_${Date.now()}`);
+        fs.writeFileSync(probe, 'ok');
+        fs.removeSync(probe);
+        return preferred;
+    } catch (e) {
+        const fallback = path.join(os.tmpdir(), 'alarm-automation-chrome-profile');
+        if (!warned) {
+            warned = true;
+            console.warn(`浏览器数据目录 ${preferred} 不可写（${e.message}），降级使用临时目录 ${fallback}（登录态不会跨次保存）`);
+        }
+        fs.mkdirSync(fallback, { recursive: true });
+        return fallback;
+    }
 }
 
 // 系统 Chrome/Chromium 常见路径，作为 puppeteer 自带浏览器缺失时的兜底
