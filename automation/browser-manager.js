@@ -46,12 +46,9 @@ const CHROME_CANDIDATES = [
 ].filter(Boolean);
 
 function resolveChromeExecutable() {
-    for (const p of CHROME_CANDIDATES) {
-        try {
-            if (fs.existsSync(p)) return p;
-        } catch (e) { /* 忽略非法路径 */ }
-    }
-    return null;
+    return CHROME_CANDIDATES.filter(p => {
+        try { return fs.existsSync(p); } catch (e) { return false; }
+    });
 }
 
 class BrowserManager {
@@ -60,29 +57,36 @@ class BrowserManager {
     }
 
     async launch(headless = true) {
-        const executablePath = resolveChromeExecutable();
         const baseOpts = {
             headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            defaultViewport: { width: 1366, height: 768 },
-            userDataDir: getUserDataDir()
+            defaultViewport: { width: 1366, height: 768 }
         };
-        // 优先使用系统浏览器路径（Chrome / Edge）
-        if (executablePath) {
-            this.browser = await puppeteer.launch({ ...baseOpts, executablePath });
-            return;
-        }
-        // 找不到具体路径时，按 channel 让 puppeteer 自动解析：
-        // Windows 几乎都自带 Edge，其次 Chrome
-        for (const channel of ['msedge', 'chrome']) {
+        const errors = [];
+        // Windows 上可能出现浏览器进程启动即退出（code 0，无 stderr）：残损的 profile 锁、
+        // 杀软拦截、exe 是跳板程序等。因此每个候选都做两级尝试：首选 userDataDir，
+        // 失败再换全新临时目录，仍失败则换下一个候选。
+        const tryLaunch = async (opts) => {
             try {
-                this.browser = await puppeteer.launch({ ...baseOpts, channel });
-                return;
+                this.browser = await puppeteer.launch(opts);
+                return true;
             } catch (e) {
-                console.warn(`使用 channel=${channel} 启动浏览器失败: ${e.message}`);
+                errors.push(`${opts.executablePath || ('channel:' + opts.channel)}: ${e.message.split('\n')[0]}`);
+                return false;
             }
+        };
+        // 1. 系统已安装的浏览器（按路径，优先 Chrome 后 Edge）
+        for (const exe of resolveChromeExecutable()) {
+            if (await tryLaunch({ ...baseOpts, executablePath: exe, userDataDir: getUserDataDir() })) return;
+            if (await tryLaunch({ ...baseOpts, executablePath: exe, userDataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'aa-chrome-')) })) return;
         }
-        throw new Error('未找到可用的 Chromium 浏览器（Chrome/Edge），无法启动自动化');
+        // 2. 按 channel 让 puppeteer 自动解析（Windows 几乎都自带 Edge）
+        for (const channel of ['msedge', 'chrome']) {
+            if (await tryLaunch({ ...baseOpts, channel, userDataDir: getUserDataDir() })) return;
+            if (await tryLaunch({ ...baseOpts, channel, userDataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'aa-chrome-')) })) return;
+        }
+        throw new Error('未能启动浏览器，已尝试的候选均失败：\n' + errors.join('\n') +
+            '\n请确认已安装 Chrome 或 Edge，或被杀毒软件拦截');
     }
 
     async newPage() {
