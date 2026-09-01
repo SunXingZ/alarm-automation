@@ -15,7 +15,7 @@ function getUserDataDir() {
         fs.mkdirSync(preferred, { recursive: true });
         const probe = path.join(preferred, `.write_probe_${Date.now()}`);
         fs.writeFileSync(probe, 'ok');
-        fs.removeSync(probe);
+        fs.unlinkSync(probe);
         return preferred;
     } catch (e) {
         const fallback = path.join(os.tmpdir(), 'alarm-automation-chrome-profile');
