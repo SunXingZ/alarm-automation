@@ -41,12 +41,17 @@ function main() {
         }
     }
     if (!ok) {
-        try { fs.removeSync ? null : fs.unlinkSync(ZIP); } catch (e) {}
+        try { fs.unlinkSync(ZIP); } catch (e) {}
         console.error('所有下载源均失败，请检查网络或手动下载 buffalo_l.zip 解压到 models/insightface/');
         process.exit(1);
     }
-    execFileSync('unzip', ['-o', ZIP, 'det_10g.onnx', 'w600k_r50.onnx', '-d', OUT_DIR], { stdio: 'inherit' });
-    // 只保留检测+识别两个模型（其余 1k3d68/2d106det/genderage 用不到，节省约 150MB）
+    // 解压只需要检测+识别两个模型。
+    // Windows 没有 unzip 命令，用系统自带 bsdtar（Win10+ 的 tar.exe 支持 zip 及成员选择）
+    if (process.platform === 'win32') {
+        execFileSync('tar', ['-xf', ZIP, '-C', OUT_DIR, 'det_10g.onnx', 'w600k_r50.onnx'], { stdio: 'inherit' });
+    } else {
+        execFileSync('unzip', ['-o', ZIP, 'det_10g.onnx', 'w600k_r50.onnx', '-d', OUT_DIR], { stdio: 'inherit' });
+    }
     fs.unlinkSync(ZIP);
     console.log('模型下载完成:', fs.readdirSync(OUT_DIR).join(', '));
 }

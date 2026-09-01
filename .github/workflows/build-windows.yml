@@ -47,30 +47,9 @@ jobs:
           # 跳过代码签名（未配置证书）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      # 打包后校验：确认原生 .node 与模型文件被正确解出 asar（否则 Windows 无法加载）
-      - name: Verify native files unpacked from asar
-        shell: pwsh
-        run: |
-          $required = @(
-            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\onnxruntime-node\bin\napi-v6\win32\x64\onnxruntime_node.dll",
-            "dist\win-unpacked\resources\app.asar.unpacked\node_modules\@img\sharp-win32-x64\lib\sharp-win32-x64-0.35.4.node"
-          )
-          $found = $false
-          foreach ($f in $required) {
-            if (Test-Path $f) { Write-Host "OK: $f"; if ($f -match "onnxruntime") { $found = $true } }
-            else { Write-Host "MISSING: $f"; exit 1 }
-          }
-          # onnxruntime_node 的实际 .node/.dll 路径可能随版本变化，找不到固定路径时
-          # 检查目录内是否有任意 onnxruntime 原生二进制
-          if (-not $found) {
-            $hit = Get-ChildItem "dist\win-unpacked\resources\app.asar.unpacked\node_modules\onnxruntime-node" -Recurse -Include "*.node","*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($hit) { Write-Host "OK (alternate path): $($hit.FullName)" }
-            else { Write-Host "MISSING: onnxruntime native binary"; exit 1 }
-          }
-          # 模型在 asar 内（用 buffer 加载），校验其在包内存在
-          $model = "dist\win-unpacked\resources\app.asar"
-          if (Test-Path $model) { Write-Host "OK: app.asar exists" }
-          else { Write-Host "MISSING: app.asar"; exit 1 }
+      # 打包后校验：原生 .node/DLL 被解出 asar、模型文件打进 asar（否则 Windows 无法加载）
+      - name: Verify packaged files
+        run: node scripts/verify-pack-win.js
 
       # 用 Electron 内置的 Node（与应用完全相同的运行时）实际加载原生模块，
       # 验证打包后的二进制确实可在 Windows 下加载
