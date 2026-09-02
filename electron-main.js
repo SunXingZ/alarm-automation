@@ -1,10 +1,28 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
-const { runAutomation } = require('./automation/index');
-const BrowserManager = require('./automation/browser-manager');
-const { getSpreadsheetTimeRange } = require('./automation/stop-finder');
+
+// 加载自动化模块（内含 onnxruntime-node / sharp 原生模块）。
+// 部分电脑缺少或版本过旧的 VC++ 运行库时，require 会抛
+// "A dynamic link library (DLL) initialization routine failed"（错误 1114）并直接崩溃；
+// 这里改为弹出可操作的提示后退出，而不是无说明地闪退
+let runAutomation, BrowserManager, getSpreadsheetTimeRange;
+try {
+    ({ runAutomation } = require('./automation/index'));
+    BrowserManager = require('./automation/browser-manager');
+    ({ getSpreadsheetTimeRange } = require('./automation/stop-finder'));
+} catch (e) {
+    dialog.showErrorBox(
+        '程序初始化失败',
+        `原生模块加载失败：${e.message}\n\n` +
+        '最常见原因是系统缺少或未安装最新版 Microsoft Visual C++ 2015-2022 运行库（x64），\n' +
+        '请从微软官网下载安装后重新运行本程序：\n' +
+        'https://aka.ms/vs/17/release/vc_redist.x64.exe\n\n' +
+        '（新版安装包已内置该运行库，重新安装本软件通常也可解决）'
+    );
+    process.exit(1);
+}
 
 // 跨平台打开目录：macOS 用 open 命令（能确保 Finder 弹出并置前）
 function openDirInOS(dir) {

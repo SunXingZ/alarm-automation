@@ -35,6 +35,16 @@ jobs:
       - name: Download face recognition models
         run: npm run download-models
 
+      # VC++ 2015-2022 x64 运行库：随安装包发布并在 NSIS 安装时静默安装。
+      # 部分用户系统缺失或版本过旧，onnxruntime-node / sharp 的原生 DLL
+      # 会报 "DLL initialization routine failed"（错误 1114）
+      - name: Download VC++ redistributable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path vendor | Out-Null
+          curl.exe -fsSL --retry 3 -o vendor/vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
+          if ((Get-Item vendor/vc_redist.x64.exe).Length -lt 1MB) { throw 'vc_redist.x64.exe 下载不完整' }
+
       # 构建前自检：确认 sharp / onnxruntime-node 两个原生模块在 Windows 上可正常加载
       - name: Verify native modules load
         run: >-
