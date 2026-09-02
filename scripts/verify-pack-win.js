@@ -53,4 +53,13 @@ for (const m of ['det_10g.onnx', 'w600k_r50.onnx']) {
     }
 }
 
+// 4. VC++ 运行库安装器（extraResources 随包，NSIS 安装时静默执行，防错误 1114）
+const vcRedist = path.join(RES, 'vc_redist.x64.exe');
+if (fs.existsSync(vcRedist) && fs.statSync(vcRedist).size > 1024 * 1024) {
+    console.log(`OK: ${vcRedist} (${(fs.statSync(vcRedist).size / 1024 / 1024).toFixed(1)}MB)`);
+} else {
+    console.log(`MISSING: ${vcRedist}`);
+    fail = true;
+}
+
 process.exit(fail ? 1 : 0);
