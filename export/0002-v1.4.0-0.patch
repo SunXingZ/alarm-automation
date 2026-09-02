@@ -1,0 +1,198 @@
+From 97b8f9b21c87c6a1dabac8cedf04f4b992b60ab1 Mon Sep 17 00:00:00 2001
+From: SunXingZ <sunjian.shanghai@foxmail.com>
+Date: Wed, 2 Sep 2026 04:42:06 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?v1.4.0=EF=BC=9A=E9=80=9F=E5=BA=A60=E6=88=AA?=
+ =?UTF-8?q?=E5=9B=BE=E8=BF=87=E6=BB=A4=E6=94=B6=E7=B4=A7=20+=20=E5=81=9C?=
+ =?UTF-8?q?=E9=9D=A0=E6=AE=B5=E4=BC=98=E5=85=88=E9=80=89=E6=9C=8D=E5=8A=A1?=
+ =?UTF-8?q?=E5=8C=BA/=E5=8A=A0=E6=B2=B9=E7=AB=99?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 速度水印 OCR 兜底：km/h 后缀丢失时取末尾数字（任意前缀字母均可识别）
+- 表格速度插值：长时间停靠 GPS 稀疏时，时刻落在相邻 0 速行之间直接判 0
+- 两级速度判定均失败时保留截图但日志留痕，便于核查
+- 停靠段选择优先地址含服务区/加油站（关键词容错：空白/标点/繁体），无命中回退距离最近
+- 日志标注停靠段选中原因（关键词优先/距离最近）
+---
+ automation/index.js         | 11 ++++++++--
+ automation/stop-finder.js   | 44 ++++++++++++++++++++++++++++++++-----
+ automation/watermark-ocr.js |  8 +++++++
+ package-lock.json           |  4 ++--
+ package.json                |  2 +-
+ 5 files changed, 59 insertions(+), 10 deletions(-)
+
+diff --git a/automation/index.js b/automation/index.js
+index 0f47f0b..cd2dae0 100644
+--- a/automation/index.js
++++ b/automation/index.js
+@@ -4,7 +4,7 @@ const ServiceB = require('./service-b');
+ const FaceComparator = require('./face-comparator');
+ const { isDriverScreenshot } = require('./driver-face-filter');
+ const { downloadImage, compressToJpg } = require('./image-saver');
+-const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime } = require('./stop-finder');
++const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime, stopAddressKeyword } = require('./stop-finder');
+ const { composeFaceStopImage } = require('./image-composer');
+ const { readWatermarkTime, readWatermarkSpeed, closeWorker } = require('./watermark-ocr');
+ const fs = require('fs-extra');
+@@ -167,6 +167,10 @@ async function runAutomation(options = {}, log = console.log) {
+                     try { fs.removeSync(item.path); } catch (e) { /* 文件被占用时不阻塞流程 */ }
+                     continue;
+                 }
++                if (speed === null) {
++                    // 两级判定均失败：不强制丢弃（避免误杀正常人脸），但留痕供核查
++                    log(`速度无法判定，保留: ${path.basename(item.path)}`);
++                }
+                 validDriverPaths.push(item);
+             }
+             log(`车牌 ${order.plate} 速度过滤后剩余 ${validDriverPaths.length}/${driverPaths.length} 张`);
+@@ -270,12 +274,15 @@ async function runAutomation(options = {}, log = console.log) {
+                 }
+                 stopNo++;
+                 const outPath = path.join(orderDir, `stop_${String(stopNo).padStart(3, '0')}.jpg`);
++                // 标注选中原因：地址含服务区/加油站优先命中，否则按距离最近
++                const kw = stopAddressKeyword(chosen);
++                const reason = kw ? `地址含"${kw}"优先` : '距离最近';
+                 try {
+                     await composeFaceStopImage(
+                         [ch.old.path, ch.new.path],
+                         chosen, order.plate, parsed.header, parsed.headerStyles, parsed.widths, outPath, tmpDir
+                     );
+-                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取最靠近 ${ch.new.time} 的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
++                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取${reason}的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
+                 } catch (err) {
+                     log(`停靠段拼图失败: ${err.message}`);
+                 }
+diff --git a/automation/stop-finder.js b/automation/stop-finder.js
+index 8949aca..22cdff9 100644
+--- a/automation/stop-finder.js
++++ b/automation/stop-finder.js
+@@ -106,14 +106,35 @@ function findStopsInWindow(rows, start, end) {
+     return segs;
+ }
+ 
++// 停靠地址优先关键词：换脸多发生在服务区/加油站等停靠休息处
++const STOP_ADDRESS_KEYWORDS = ['服务区', '加油站'];
++
++// 地址文本容错归一化：去空白（含全角空格）、去常见分隔标点、繁体转简体
++const TRAD_TO_SIMPL = { '區': '区', '務': '务' };
++function normalizeAddressText(addr) {
++    return String(addr || '')
++        .replace(/[\s\u3000]+/g, '')
++        .replace(/[，,、/\\|（）()【】\[\]·．.]/g, '')
++        .replace(/[\u4e00-\u9fff]/g, ch => TRAD_TO_SIMPL[ch] || ch);
++}
++
++// 判断停靠段地址是否命中优先关键词（含前/后边界行），命中返回该关键词，否则返回 null
++function stopAddressKeyword(stop) {
++    const norm = normalizeAddressText(stop.rows.map(r => r.address).join(''));
++    return STOP_ADDRESS_KEYWORDS.find(k => norm.includes(k)) || null;
++}
++
+ // 在多个停靠段中，取“发生时刻”最靠近指定时间的那一段
+ // 停靠段发生时刻取该段内第一条 0 速行的时间
++// 优先选地址含服务区/加油站的段（换脸多发生在停靠休息处），没有再按距离最近
+ function pickClosestStop(stops, endTimeStr) {
+     if (!stops || stops.length === 0) return null;
+     const end = new Date(String(endTimeStr).replace(' ', 'T')).getTime();
++    const preferred = stops.filter(s => stopAddressKeyword(s));
++    const pool = preferred.length ? preferred : stops;
+     let best = null;
+     let bestDist = Infinity;
+-    for (const s of stops) {
++    for (const s of pool) {
+         const zeroRow = s.rows.find(r => r.speed === 0) || s.rows[0];
+         const t = new Date(zeroRow.timeStr.replace(' ', 'T')).getTime();
+         const dist = Math.abs(t - end);
+@@ -125,7 +146,9 @@ function pickClosestStop(stops, endTimeStr) {
+     return best;
+ }
+ 
+-// 查某时刻的速度：取表格中时间最接近的行（限 maxGapSec 秒内），返回速度或 null
++// 查某时刻的速度：取表格中时间最接近的行（限 maxGapSec 秒内），返回速度或 null。
++// 表格内无邻近行（长时间停靠时 GPS 采样稀疏）时插值判定：
++// 若该时刻落在两个相邻的 0 速行之间，说明整段都在静止，直接判 0
+ function findSpeedAtTime(rows, timeStr, maxGapSec = 60) {
+     const t = new Date(String(timeStr || '').replace(' ', 'T')).getTime();
+     if (isNaN(t)) return null;
+@@ -135,8 +158,19 @@ function findSpeedAtTime(rows, timeStr, maxGapSec = 60) {
+         const dist = Math.abs(r.time.getTime() - t);
+         if (dist < bestDist) { bestDist = dist; best = r; }
+     }
+-    if (!best || bestDist > maxGapSec * 1000) return null;
+-    return best.speed;
++    if (best && bestDist <= maxGapSec * 1000) return best.speed;
++
++    // 插值兜底：找该时刻落入的相邻两行（rows 已按时间升序）
++    let next = null;
++    for (let i = 0; i < rows.length; i++) {
++        if (rows[i].time.getTime() >= t) { next = i; break; }
++    }
++    if (next !== null && next > 0) {
++        const prev = rows[next - 1];
++        const nxt = rows[next];
++        if (prev.speed === 0 && nxt.speed === 0) return 0;
++    }
++    return null;
+ }
+ 
+ // 主入口：给定表格文件与（已升序的）人脸时间点数组，
+@@ -177,4 +211,4 @@ function getSpreadsheetTimeRange(filePath) {
+     };
+ }
+ 
+-module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange, findSpeedAtTime };
++module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange, findSpeedAtTime, stopAddressKeyword };
+diff --git a/automation/watermark-ocr.js b/automation/watermark-ocr.js
+index 84a4927..319c106 100644
+--- a/automation/watermark-ocr.js
++++ b/automation/watermark-ocr.js
+@@ -181,6 +181,14 @@ function parseSpeed(text) {
+         const v = parseFloat(m[1]);
+         if (Number.isFinite(v)) return v;
+     }
++    // 兜底：裁剪区本来就是速度专属角落，小字 OCR 常丢掉 km/h 后缀，
++    // 且速度前缀字母不固定（G/V/S/E…，白名单外的会被 OCR 丢弃）。
++    // 无论前缀是什么字母，取文本中最后一个数字作为速度
++    const nums = s.match(/\d+(?:\.\d+)?/g);
++    if (nums && nums.length) {
++        const v = parseFloat(nums[nums.length - 1]);
++        if (Number.isFinite(v)) return v;
++    }
+     return null;
+ }
+ 
+diff --git a/package-lock.json b/package-lock.json
+index 232f5d6..bc448ba 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "alarm-automation-electron",
+-  "version": "1.2.0",
++  "version": "1.3.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "alarm-automation-electron",
+-      "version": "1.2.0",
++      "version": "1.3.0",
+       "license": "ISC",
+       "dependencies": {
+         "@tesseract.js-data/eng": "^1.0.0",
+diff --git a/package.json b/package.json
+index 44bc81a..fecd50e 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "alarm-automation-electron",
+-  "version": "1.3.0",
++  "version": "1.4.0",
+   "description": "营运车辆报警申诉自动化工具（人脸聚类 + 停靠段拼图）",
+   "main": "electron-main.js",
+   "scripts": {
+-- 
+2.43.0
+
