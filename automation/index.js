@@ -4,7 +4,7 @@ const ServiceB = require('./service-b');
 const FaceComparator = require('./face-comparator');
 const { isDriverScreenshot } = require('./driver-face-filter');
 const { downloadImage, compressToJpg } = require('./image-saver');
-const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime } = require('./stop-finder');
+const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime, stopAddressKeyword } = require('./stop-finder');
 const { composeFaceStopImage } = require('./image-composer');
 const { readWatermarkTime, readWatermarkSpeed, closeWorker } = require('./watermark-ocr');
 const fs = require('fs-extra');
@@ -167,6 +167,10 @@ async function runAutomation(options = {}, log = console.log) {
                     try { fs.removeSync(item.path); } catch (e) { /* 文件被占用时不阻塞流程 */ }
                     continue;
                 }
+                if (speed === null) {
+                    // 两级判定均失败：不强制丢弃（避免误杀正常人脸），但留痕供核查
+                    log(`速度无法判定，保留: ${path.basename(item.path)}`);
+                }
                 validDriverPaths.push(item);
             }
             log(`车牌 ${order.plate} 速度过滤后剩余 ${validDriverPaths.length}/${driverPaths.length} 张`);
@@ -270,12 +274,15 @@ async function runAutomation(options = {}, log = console.log) {
                 }
                 stopNo++;
                 const outPath = path.join(orderDir, `stop_${String(stopNo).padStart(3, '0')}.jpg`);
+                // 标注选中原因：地址含服务区/加油站优先命中，否则按距离最近
+                const kw = stopAddressKeyword(chosen);
+                const reason = kw ? `地址含"${kw}"优先` : '距离最近';
                 try {
                     await composeFaceStopImage(
                         [ch.old.path, ch.new.path],
                         chosen, order.plate, parsed.header, parsed.headerStyles, parsed.widths, outPath, tmpDir
                     );
-                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取最靠近 ${ch.new.time} 的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
+                    log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取${reason}的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
                 } catch (err) {
                     log(`停靠段拼图失败: ${err.message}`);
                 }
