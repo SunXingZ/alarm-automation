@@ -2,19 +2,16 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
-const { runAutomation } = require('./automation/index');
-const BrowserManager = require('./automation/browser-manager');
-const ExportFlow = require('./automation/export-flow');
-const { getSpreadsheetTimeRange } = require('./automation/stop-finder');
 
 // 加载自动化模块（内含 onnxruntime-node / sharp 原生模块）。
 // 部分电脑缺少或版本过旧的 VC++ 运行库时，require 会抛
 // "A dynamic link library (DLL) initialization routine failed"（错误 1114）并直接崩溃；
 // 这里改为弹出可操作的提示后退出，而不是无说明地闪退
-let runAutomation, BrowserManager, getSpreadsheetTimeRange;
+let runAutomation, BrowserManager, getSpreadsheetTimeRange, ExportFlow;
 try {
     ({ runAutomation } = require('./automation/index'));
     BrowserManager = require('./automation/browser-manager');
+    ExportFlow = require('./automation/export-flow');
     ({ getSpreadsheetTimeRange } = require('./automation/stop-finder'));
 } catch (e) {
     dialog.showErrorBox(
