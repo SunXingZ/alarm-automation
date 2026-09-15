@@ -51,8 +51,22 @@ jobs:
           node -e "require('sharp'); require('onnxruntime-node'); console.log('native modules OK: sharp + onnxruntime-node')"
 
       - name: Build Windows installer
-        # --publish never：只构建，不发布到 GitHub Releases（避免需要 GH_TOKEN）
-        run: npx electron-builder --win --x64 --publish never
+        # electron-builder 需从 GitHub Releases 下载 NSIS 工具链，偶发 500（服务端瞬时错误）。
+        # 已成功下载的资源会进入缓存，重试只补下失败的文件，故最多重试 3 次即可根治
+        shell: pwsh
+        run: |
+          $max = 3
+          for ($i = 1; $i -le $max; $i++) {
+            Write-Host "===== 第 $i/$max 次构建尝试 ====="
+            npx electron-builder --win --x64 --publish never
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -lt $max) {
+              Write-Host "构建失败（多为资源下载偶发 500），10 秒后重试..."
+              Start-Sleep -Seconds 10
+            }
+          }
+          Write-Error "连续 $max 次构建失败"
+          exit 1
         env:
           # 跳过代码签名（未配置证书）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
