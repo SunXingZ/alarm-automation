@@ -7,11 +7,80 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <main class="page">
+    <!-- 顶部选项卡 -->
+    <nav class="tab-bar">
+        <button type="button" class="tab-btn active" data-tab="tab-export">导出申诉表格</button>
+        <button type="button" class="tab-btn" data-tab="tab-process">处理申诉表格</button>
+    </nav>
+
+    <!-- ==================== 选项卡1：导出申诉表格 ==================== -->
+    <main id="tab-export" class="page tab-page active">
+        <header class="page-header">
+            <div class="header-icon">📤</div>
+            <div>
+                <h1>导出申诉表格</h1>
+                <p class="subtitle">自动读取报警申诉列表中“待处理”的申诉，并在运输车辆监控平台导出对应轨迹表格</p>
+            </div>
+        </header>
+
+        <section class="form-container">
+            <div class="card">
+                <div class="card-header">
+                    <h2>第一步：导出轨迹表格</h2>
+                </div>
+                <small class="filter-tip">流程：打开报警申诉列表（如登录过期需在弹出的浏览器窗口手动登录）→ 读取“待处理”申诉的车牌号与开始/结束时间 → 在车辆监控平台逐条回放轨迹并导出表格（保存弹窗已静默接管，无需人工确认）</small>
+                <button id="export-btn" class="primary-btn">
+                    <span class="btn-icon">▶</span>
+                    <span class="btn-text">开始导出</span>
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>导出结果</h2>
+                    <span id="export-summary" class="log-status"></span>
+                </div>
+                <div class="export-results">
+                    <table class="result-table">
+                        <thead>
+                            <tr>
+                                <th>车牌号</th>
+                                <th>开始时间</th>
+                                <th>结束时间</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="export-result-body">
+                            <tr class="empty-row"><td colspan="5">尚未导出，点击上方“开始导出”</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <button id="process-all-btn" class="primary-btn warn" disabled>
+                    <span class="btn-icon">⚡</span>
+                    <span class="btn-text">一键处理申诉表格</span>
+                </button>
+                <small class="filter-tip">一键处理会按顺序把每个导出的表格自动导入“处理申诉表格”选项卡并依次执行自动化处理</small>
+            </div>
+        </section>
+
+        <section id="export-log-container" class="log-container">
+            <div class="log-header">
+                <h3>导出日志</h3>
+                <span class="log-status" id="export-log-status">空闲</span>
+            </div>
+            <div id="export-log-output"></div>
+        </section>
+
+        <footer class="page-footer">报警申诉自动化工具 · 请妥善保管账号信息</footer>
+    </main>
+
+    <!-- ==================== 选项卡2：处理申诉表格（原有功能） ==================== -->
+    <main id="tab-process" class="page tab-page">
         <header class="page-header">
             <div class="header-icon">🛡️</div>
             <div>
-                <h1>报警申诉自动化工具</h1>
+                <h1>处理申诉表格</h1>
                 <p class="subtitle">在浏览器中手动登录道路运输车辆运营监测分析应用 / 运输车辆监控平台，自动化获取待处理订单并保存人脸截图</p>
             </div>
         </header>

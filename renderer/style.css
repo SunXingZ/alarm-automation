@@ -435,3 +435,198 @@ input[type="range"]::-moz-range-thumb {
     font-size: 12px;
     margin-top: 18px;
 }
+
+/* ==================== 顶部选项卡 ==================== */
+body {
+    flex-direction: column;
+    align-items: center;
+    padding-top: 12px;
+}
+
+.tab-bar {
+    display: flex;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 5px;
+    margin-bottom: 14px;
+    width: 100%;
+    max-width: 520px;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 10px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.75);
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.tab-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.tab-btn.active {
+    color: #2c3e50;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.tab-page {
+    display: none;
+}
+
+.tab-page.active {
+    display: block;
+}
+
+/* ==================== 导出结果表格 ==================== */
+.export-results {
+    border: 1px solid #e3e8ef;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.export-results::-webkit-scrollbar {
+    width: 8px;
+}
+
+.export-results::-webkit-scrollbar-thumb {
+    background: #cfd8e3;
+    border-radius: 4px;
+}
+
+.result-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.result-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f4f7fb;
+    color: #555;
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e3e8ef;
+    white-space: nowrap;
+}
+
+.result-table tbody td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #eef1f5;
+    color: #333;
+    vertical-align: middle;
+}
+
+.result-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.result-table .empty-row td {
+    text-align: center;
+    color: #aab4c0;
+    padding: 18px 10px;
+}
+
+.result-table .time-cell {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: #555;
+}
+
+/* 状态徽标 */
+.status-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.status-exporting {
+    background: #e7f3ff;
+    color: #357abd;
+}
+
+.status-exported {
+    background: #e6f7ec;
+    color: #2e9e5b;
+}
+
+.status-processing {
+    background: #fff6e6;
+    color: #d98a2b;
+}
+
+.status-processed {
+    background: #eef1f5;
+    color: #8892a0;
+}
+
+.status-failed {
+    background: #fdecec;
+    color: #d9534f;
+}
+
+/* 行内操作按钮 */
+.ops-cell {
+    white-space: nowrap;
+}
+
+.mini-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #357abd;
+    background: #eef4fb;
+    border: 1px solid #cfe0f1;
+    border-radius: 7px;
+    cursor: pointer;
+    margin-right: 6px;
+    transition: background 0.2s;
+}
+
+.mini-btn:hover:not(:disabled) {
+    background: #e0edf9;
+}
+
+.mini-btn:disabled {
+    color: #aab4c0;
+    background: #f4f6f9;
+    border-color: #e3e8ef;
+    cursor: not-allowed;
+}
+
+/* 一键处理按钮（警示色） */
+.primary-btn.warn {
+    background: linear-gradient(135deg, #f2994a, #eb7c3e);
+    box-shadow: 0 6px 16px rgba(235, 124, 62, 0.35);
+}
+
+.primary-btn.warn:hover:not(:disabled) {
+    box-shadow: 0 8px 20px rgba(235, 124, 62, 0.45);
+}
+
+.primary-btn.warn:disabled {
+    background: linear-gradient(135deg, #d6c3ad, #c9a986);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* 隐藏原生 file input 的视觉空间 */
+#local-file {
+    display: none;
+}

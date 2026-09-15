@@ -40,6 +40,66 @@ const REPAIR_STATUSES = [
     { id: '2,4', name: '已处置' }
 ];
 
+// ==================== 通用工具 ====================
+// 日志追加（自动滚动到底部）
+function appendLog(outputEl, message) {
+    const div = document.createElement('div');
+    div.textContent = message;
+    outputEl.appendChild(div);
+    outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+// 从路径取文件名（渲染进程无 path 模块）
+function pathBasename(p) {
+    return String(p || '').split(/[\\/]/).pop();
+}
+
+// 车牌号规整：沪X 前缀后加 -（如 沪EE2709 → 沪E-E2709）；已含 - 则保持不变
+function formatPlate(p) {
+    const s = String(p || '').trim();
+    if (!s || s.includes('-')) return s;
+    if (/^沪[A-Za-z]/.test(s)) return s.slice(0, 2) + '-' + s.slice(2);
+    return s;
+}
+
+// 从文件名解析车牌号与日期（含时分秒），_ / - / T / 空格 均可作分隔
+// 返回 { plate, date, time }：解析不到的部分为空字符串；整体解析失败返回 null
+function parsePlateDateFromFilename(name) {
+    const s = String(name || '').trim();
+    if (!s) return null;
+
+    // 日期/时间部分：yyyy[_/-]MM[_/-]dd[分隔 HH[:/_ -]mm[:/_ -]ss]
+    const dateMatch = s.match(/(\d{4})[_\-](\d{1,2})[_\-](\d{1,2})(?:[T _\-](\d{1,2})[: _\-](\d{1,2})(?:[: _\-](\d{1,2}))?)?/);
+    if (!dateMatch) return null;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const date = `${dateMatch[1]}-${pad(dateMatch[2])}-${pad(dateMatch[3])}`;
+    let time = '';
+    if (dateMatch[4] && dateMatch[5]) {
+        time = `${pad(dateMatch[4])}:${pad(dateMatch[5])}`;
+        time += dateMatch[6] ? ':' + pad(dateMatch[6]) : ':00';
+    }
+
+    // 车牌：日期之前的部分（去掉结尾分隔符与 (n) 后缀）；需形如“省字+字母/数字/横杠”才算解析到
+    const rawPlate = s.slice(0, dateMatch.index).replace(/[_\-]+$/, '').trim();
+    let plate = '';
+    if (/^[\u4e00-\u9fa5][A-Za-z0-9\u4e00-\u9fa5-]*$/.test(rawPlate) && /[A-Za-z0-9]/.test(rawPlate)) {
+        plate = formatPlate(rawPlate.replace(/\(\d+\)$/, ''));
+    }
+
+    return { plate, date, time };
+}
+
+// ==================== 顶部选项卡切换 ====================
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('active', p.id === tabId));
+}
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+// ==================== 处理申诉表格（选项卡2，原有功能） ====================
 // 生成单个复选框
 function makeCheck(value, label) {
     const l = document.createElement('label');
@@ -92,44 +152,8 @@ const localFileInput = document.getElementById('local-file');
 const filePickBtn = document.getElementById('file-pick-btn');
 const fileNameEl = document.getElementById('file-name');
 let spreadsheetPath = ''; // 选中的表格文件绝对路径（供停靠段匹配读取）
+let spreadsheetFromExport = false; // 表格是否来自导出申诉流程（处理成功后需归档到结果目录）
 
-// 车牌号规整：沪X 前缀后加 -（如 沪EE2709 → 沪E-E2709）；已含 - 则保持不变
-function formatPlate(p) {
-    const s = String(p || '').trim();
-    if (!s || s.includes('-')) return s;
-    if (/^沪[A-Za-z]/.test(s)) return s.slice(0, 2) + '-' + s.slice(2);
-    return s;
-}
-
-// 从文件名解析车牌号与日期（含时分秒），_ / - / T / 空格 均可作分隔
-// 返回 { plate, date, time }：解析不到的部分为空字符串；整体解析失败返回 null
-function parsePlateDateFromFilename(name) {
-    const s = String(name || '').trim();
-    if (!s) return null;
-
-    // 日期/时间部分：yyyy[_/-]MM[_/-]dd[分隔 HH[:/_ -]mm[:/_ -]ss]
-    const dateMatch = s.match(/(\d{4})[_\-](\d{1,2})[_\-](\d{1,2})(?:[T _\-](\d{1,2})[: _\-](\d{1,2})(?:[: _\-](\d{1,2}))?)?/);
-    if (!dateMatch) return null;
-
-    const pad = (n) => String(n).padStart(2, '0');
-    const date = `${dateMatch[1]}-${pad(dateMatch[2])}-${pad(dateMatch[3])}`;
-    let time = '';
-    if (dateMatch[4] && dateMatch[5]) {
-        time = `${pad(dateMatch[4])}:${pad(dateMatch[5])}`;
-        time += dateMatch[6] ? ':' + pad(dateMatch[6]) : ':00';
-    }
-
-    // 车牌：日期之前的部分（去掉结尾分隔符与 (n) 后缀）；需形如“省字+字母/数字/横杠”才算解析到
-    const rawPlate = s.slice(0, dateMatch.index).replace(/[_\-]+$/, '').trim();
-    let plate = '';
-    if (/^[\u4e00-\u9fa5][A-Za-z0-9\u4e00-\u9fa5-]*$/.test(rawPlate) && /[A-Za-z0-9]/.test(rawPlate)) {
-        plate = formatPlate(rawPlate.replace(/\(\d+\)$/, ''));
-    }
-
-    return { plate, date, time };
-}
-
-filePickBtn.addEventListener('click', () => localFileInput.click());
 // 用文件名日期填充时间（缺时间按 0-24 点）
 function fillDatesFromFilename(parsed) {
     if (!parsed || !parsed.date) return false;
@@ -139,11 +163,14 @@ function fillDatesFromFilename(parsed) {
     return true;
 }
 
+filePickBtn.addEventListener('click', () => localFileInput.click());
+
 localFileInput.addEventListener('change', async () => {
     const f = localFileInput.files && localFileInput.files[0];
     if (!f) return;
     fileNameEl.textContent = f.name;
     spreadsheetPath = window.electronAPI.getFilePath(f) || '';
+    spreadsheetFromExport = false; // 手动选择的本地表格，不参与归档
     const parsed = parsePlateDateFromFilename(f.name);
     // 容错：只填充解析到的字段，解析不到的保留用户已有输入
     let filled = false;
@@ -173,8 +200,26 @@ localFileInput.addEventListener('change', async () => {
     }
 });
 
-document.getElementById('start-btn').addEventListener('click', async () => {
-    // 道路运输车辆运营监测分析应用 与 运输车辆监控平台 均需用户在弹出的浏览器中手动登录，无需凭据表单
+// 处理日志：只注册一次，避免多次运行后日志重复（此前每次点击都会重复注册）
+const logOutput = document.getElementById('log-output');
+const statusEl = document.getElementById('log-status');
+window.electronAPI.onLogMessage((message) => appendLog(logOutput, message));
+
+const setStatus = (text, cls) => {
+    statusEl.textContent = text;
+    statusEl.className = 'log-status ' + (cls || '');
+};
+
+const startBtn = document.getElementById('start-btn');
+let processRunning = false;
+
+// 启动处理流程（读取选项卡2 表单当前值组装 payload）
+// opts.silent: 不弹完成/失败提示（一键处理批量模式使用）
+// opts.openDirOnFinish: 是否在完成后自动打开输出目录（批量模式为 false，结束后统一打开）
+async function startProcess(opts = {}) {
+    if (processRunning) {
+        return { success: false, error: '已有任务在运行中，请等待完成' };
+    }
     const readChecks = (id, parse) => Array.from(document.querySelectorAll('#' + id + ' input:checked')).map(i => parse(i.value));
     const payload = {
         plate: document.getElementById('plate').value.trim(),
@@ -184,43 +229,242 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         riskLevels: readChecks('risk-level-filters', parseInt),
         repairStatus: readChecks('repair-status-filters', (v) => v),
         spreadsheetPath: spreadsheetPath || '',
-        faceThreshold: clampThreshold(thresholdSlider.value)
+        faceThreshold: clampThreshold(thresholdSlider.value),
+        openDirOnFinish: opts.openDirOnFinish !== false,
+        copySpreadsheet: spreadsheetFromExport // 自动导入的表格在成功后归档到结果目录
     };
 
-    const btn = document.getElementById('start-btn');
-    btn.disabled = true;
-    btn.textContent = '运行中...';
-
-    const logOutput = document.getElementById('log-output');
+    processRunning = true;
+    startBtn.disabled = true;
+    startBtn.querySelector('.btn-text').textContent = '运行中...';
     logOutput.innerHTML = '';
-
-    // 更新顶部状态徽标
-    const statusEl = document.getElementById('log-status');
-    const setStatus = (text, cls) => {
-        statusEl.textContent = text;
-        statusEl.className = 'log-status ' + (cls || '');
-    };
     setStatus('运行中', 'running');
 
-    // 监听日志消息
-    window.electronAPI.onLogMessage((message) => {
-        const div = document.createElement('div');
-        div.textContent = message;
-        logOutput.appendChild(div);
-        logOutput.scrollTop = logOutput.scrollHeight;
-    });
-
-    // 开始自动化
     const result = await window.electronAPI.startAutomation(payload);
 
     if (result.success) {
-        alert(`任务完成！结果保存在: ${result.outputDir}`);
         setStatus('完成', 'done');
+        if (!opts.silent) alert(`任务完成！结果保存在: ${result.outputDir}`);
     } else {
-        alert(`任务失败: ${result.error}`);
         setStatus('失败', 'error');
+        if (!opts.silent) alert(`任务失败: ${result.error}`);
     }
 
-    btn.disabled = false;
-    btn.textContent = '开始自动化';
+    processRunning = false;
+    startBtn.disabled = false;
+    startBtn.querySelector('.btn-text').textContent = '开始自动化';
+    return result;
+}
+
+startBtn.addEventListener('click', () => startProcess());
+
+// ==================== 导出申诉表格（选项卡1，新增功能） ====================
+const exportBtn = document.getElementById('export-btn');
+const processAllBtn = document.getElementById('process-all-btn');
+const exportLogOutput = document.getElementById('export-log-output');
+const exportLogStatus = document.getElementById('export-log-status');
+const exportSummary = document.getElementById('export-summary');
+const exportResultBody = document.getElementById('export-result-body');
+
+let exportResults = [];          // 导出结果（含实时状态）
+const exportRowMap = new Map();  // index -> tr 行元素
+let exporting = false;
+let batchRunning = false;
+
+const setExportStatus = (text, cls) => {
+    exportLogStatus.textContent = text;
+    exportLogStatus.className = 'log-status ' + (cls || '');
+};
+
+window.electronAPI.onExportLogMessage((message) => appendLog(exportLogOutput, message));
+window.electronAPI.onExportProgress((p) => {
+    if (!p || typeof p.index !== 'number') return;
+    exportResults[p.index] = { ...(exportResults[p.index] || {}), ...p };
+    renderExportRow(p.index);
+    updateExportSummary();
+});
+
+const STATUS_TEXT = {
+    exporting: '导出中',
+    exported: '已导出',
+    processing: '处理中',
+    processed: '已处理',
+    failed: '失败'
+};
+
+function statusTag(status) {
+    return `<span class="status-tag status-${status}">${STATUS_TEXT[status] || status || '待处理'}</span>`;
+}
+
+function updateExportSummary() {
+    if (!exportResults.length) {
+        exportSummary.textContent = '';
+        return;
+    }
+    const ok = exportResults.filter(r => r.status === 'exported' || r.status === 'processed').length;
+    const fail = exportResults.filter(r => r.status === 'failed').length;
+    exportSummary.textContent = `共 ${exportResults.length} 条 · 可处理 ${ok}` + (fail ? ` · 失败 ${fail}` : '');
+    processAllBtn.disabled = batchRunning || exporting || !exportResults.some(r => r.status === 'exported');
+}
+
+// 渲染/更新某一行导出结果（含下载与处理按钮）
+function renderExportRow(index) {
+    const r = exportResults[index];
+    if (!r) return;
+    let tr = exportRowMap.get(index);
+    if (!tr) {
+        // 清掉占位空行
+        const empty = exportResultBody.querySelector('.empty-row');
+        if (empty) empty.remove();
+        tr = document.createElement('tr');
+        exportRowMap.set(index, tr);
+        exportResultBody.appendChild(tr);
+    }
+    const canDownload = !!r.filePath;
+    const canProcess = r.status === 'exported';
+    tr.innerHTML = `
+        <td>${r.plate || '-'}</td>
+        <td class="time-cell">${r.startTime || '-'}</td>
+        <td class="time-cell">${r.endTime || '-'}</td>
+        <td>${statusTag(r.status)}</td>
+        <td class="ops-cell"></td>`;
+    const ops = tr.querySelector('.ops-cell');
+
+    const dlBtn = document.createElement('button');
+    dlBtn.type = 'button';
+    dlBtn.className = 'mini-btn';
+    dlBtn.textContent = '下载表格';
+    dlBtn.disabled = !canDownload;
+    dlBtn.addEventListener('click', async () => {
+        dlBtn.disabled = true;
+        const res = await window.electronAPI.saveExportedFile(r.filePath, pathBasename(r.filePath));
+        dlBtn.disabled = false;
+        if (res && res.error) alert(`保存失败: ${res.error}`);
+    });
+
+    const prBtn = document.createElement('button');
+    prBtn.type = 'button';
+    prBtn.className = 'mini-btn';
+    prBtn.textContent = '处理申诉';
+    prBtn.disabled = !canProcess || batchRunning || processRunning;
+    prBtn.addEventListener('click', () => processSingleComplaint(index));
+
+    ops.appendChild(dlBtn);
+    ops.appendChild(prBtn);
+}
+
+// 重置结果表格（重新导出时清空旧数据）
+function resetExportTable() {
+    exportResults = [];
+    exportRowMap.clear();
+    exportResultBody.innerHTML = '<tr class="empty-row"><td colspan="5">正在导出…</td></tr>';
+    updateExportSummary();
+}
+
+exportBtn.addEventListener('click', async () => {
+    if (exporting || batchRunning || processRunning) return;
+    exporting = true;
+    exportBtn.disabled = true;
+    exportBtn.querySelector('.btn-text').textContent = '导出中...';
+    exportLogOutput.innerHTML = '';
+    resetExportTable();
+    setExportStatus('运行中', 'running');
+
+    const result = await window.electronAPI.exportComplaintTables();
+
+    if (result && result.success) {
+        // 以最终返回的完整结果为准重绘
+        exportResults = result.results || [];
+        exportResultBody.innerHTML = '';
+        exportRowMap.clear();
+        exportResults.forEach((_, i) => renderExportRow(i));
+        updateExportSummary();
+        const fail = exportResults.filter(r => r.status === 'failed').length;
+        setExportStatus(fail ? `完成（${fail} 条失败）` : '完成', fail ? 'error' : 'done');
+    } else {
+        exportResultBody.innerHTML = `<tr class="empty-row"><td colspan="5">导出失败：${(result && result.error) || '未知错误'}</td></tr>`;
+        setExportStatus('失败', 'error');
+    }
+
+    exporting = false;
+    exportBtn.disabled = false;
+    exportBtn.querySelector('.btn-text').textContent = '开始导出';
+});
+
+// ==================== 处理申诉（单个 / 一键批量） ====================
+// 把导出表格自动“导入”到处理申诉表格选项卡：填入文件、车牌、起止时间
+function loadComplaintIntoProcessForm(r) {
+    switchTab('tab-process');
+    document.getElementById('plate').value = formatPlate(r.plate);
+    document.getElementById('start-date').value = r.startTime || '';
+    document.getElementById('end-date').value = r.endTime || '';
+    spreadsheetPath = r.filePath || '';
+    spreadsheetFromExport = true; // 来自导出流程，处理成功后归档到结果目录
+    fileNameEl.textContent = r.filePath ? pathBasename(r.filePath) : '未选择';
+}
+
+// 处理单条导出的申诉：跳转选项卡并自动执行
+async function processSingleComplaint(index) {
+    if (processRunning || batchRunning || exporting) return;
+    const r = exportResults[index];
+    if (!r || !r.filePath) return;
+    loadComplaintIntoProcessForm(r);
+    const row = exportRowMap.get(index);
+    r.status = 'processing';
+    if (row) renderExportRow(index);
+    updateExportSummary();
+
+    const result = await startProcess();
+
+    r.status = result.success ? 'processed' : 'failed';
+    r.error = result.error || '';
+    if (row) renderExportRow(index);
+    updateExportSummary();
+}
+
+// 一键处理：按顺序把每个已导出的表格导入并执行自动化处理
+processAllBtn.addEventListener('click', async () => {
+    const list = exportResults
+        .map((r, i) => ({ r, i }))
+        .filter(x => x.r.status === 'exported');
+    if (!list.length || batchRunning || processRunning || exporting) return;
+    if (!confirm(`共 ${list.length} 个表格，将依次自动处理（每个处理完再处理下一个），确认开始？`)) return;
+
+    batchRunning = true;
+    processAllBtn.disabled = true;
+    exportBtn.disabled = true;
+    processAllBtn.querySelector('.btn-text').textContent = '批量处理中...';
+    const savedDirs = [];
+    let failCount = 0;
+
+    for (const { r, i } of list) {
+        loadComplaintIntoProcessForm(r);
+        r.status = 'processing';
+        renderExportRow(i);
+        updateExportSummary();
+
+        const result = await startProcess({ silent: true, openDirOnFinish: false });
+        if (result.success) {
+            if (result.savedDirs && result.savedDirs.length) savedDirs.push(...result.savedDirs);
+            r.status = 'processed';
+        } else {
+            r.status = 'failed';
+            r.error = result.error || '';
+            failCount++;
+        }
+        renderExportRow(i);
+        updateExportSummary();
+    }
+
+    // 批量结束后统一打开结果目录
+    if (savedDirs.length) {
+        const err = await window.electronAPI.openOutputDir(savedDirs[savedDirs.length - 1]);
+        if (err) appendLog(logOutput, `自动打开保存目录失败: ${err}`);
+    }
+    alert(`批量处理完成：成功 ${list.length - failCount}，失败 ${failCount}`);
+
+    batchRunning = false;
+    processAllBtn.disabled = false;
+    exportBtn.disabled = false;
+    processAllBtn.querySelector('.btn-text').textContent = '一键处理申诉表格';
 });

@@ -12,7 +12,7 @@ const path = require('path');
 const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
-    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold } = options;
+    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, copySpreadsheet } = options;
 
     // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
     const ENABLE_SERVICE_A = false;
@@ -279,6 +279,27 @@ async function runAutomation(options = {}, log = console.log) {
                 } catch (err) {
                     log(`停靠段拼图失败: ${err.message}`);
                 }
+            }
+        }
+
+        // 按需归档自动导入的申诉表格到结果目录（导出申诉流程使用；手动选本地表格不带此标记，不影响原有行为）
+        if (copySpreadsheet && spreadsheetPath) {
+            const order0 = orders[0] || {};
+            let targetDir = savedDirs.length ? savedDirs[savedDirs.length - 1] : null;
+            if (!targetDir) {
+                targetDir = path.join(outputDir, sanitize(order0.plate || '未知车牌') + '_' + sanitize(String(order0.startDate || '')).slice(0, 10));
+                try {
+                    fs.ensureDirSync(targetDir);
+                } catch (e) {
+                    targetDir = outputDir;
+                }
+            }
+            try {
+                const tableTarget = path.join(targetDir, path.basename(spreadsheetPath));
+                await fs.copy(spreadsheetPath, tableTarget, { overwrite: true });
+                log(`申诉表格已归档: ${tableTarget}`);
+            } catch (e) {
+                log(`申诉表格归档失败: ${e.message}`);
             }
         }
 

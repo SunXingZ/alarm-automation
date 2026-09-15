@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
 const { runAutomation } = require('./automation/index');
 const BrowserManager = require('./automation/browser-manager');
+const ExportFlow = require('./automation/export-flow');
 const { getSpreadsheetTimeRange } = require('./automation/stop-finder');
 
 // 跨平台打开目录：macOS 用 open 命令（能确保 Finder 弹出并置前）
@@ -53,10 +54,11 @@ ipcMain.handle('start-automation', async (event, payload) => {
     // 输出目录可以动态设置，例如使用 app.getPath('documents')
     const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
 
-    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold } = payload;
-    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold }, log);
-    // 任务完成后自动打开保存目录（优先打开实际保存人脸的“车牌_日期”子目录）
-    if (result.success && result.outputDir) {
+    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, openDirOnFinish, copySpreadsheet } = payload;
+    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, copySpreadsheet }, log);
+    // 任务完成后自动打开保存目录（优先打开实际保存人脸的“车牌_日期”子目录）；
+    // 一键处理批量模式由渲染进程传 openDirOnFinish=false，全部完成后统一打开
+    if (openDirOnFinish !== false && result.success && result.outputDir) {
         const openDir = (result.savedDirs && result.savedDirs.length)
             ? result.savedDirs[result.savedDirs.length - 1]
             : result.outputDir;
@@ -70,6 +72,46 @@ ipcMain.handle('start-automation', async (event, payload) => {
         }
     }
     return result;
+});
+
+// 导出申诉表格：采集“待处理”申诉并在监控平台导出轨迹表格
+ipcMain.handle('export-complaint-tables', async () => {
+    const log = (message) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('export-log-message', message);
+        }
+    };
+    const onProgress = (p) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('export-progress', p);
+        }
+    };
+    const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
+    const flow = new ExportFlow({ log, outputDir, onProgress });
+    try {
+        return await flow.run();
+    } catch (e) {
+        log(`导出流程失败: ${e.message}`);
+        return { success: false, error: e.message };
+    }
+});
+
+// 下载表格到本地（另存为对话框）
+ipcMain.handle('save-exported-file', async (event, { srcPath, suggestedName }) => {
+    try {
+        const res = await dialog.showSaveDialog(mainWindow, { defaultPath: suggestedName || '导出表格.xls' });
+        if (res.canceled || !res.filePath) return { canceled: true };
+        await fs.copy(srcPath, res.filePath, { overwrite: true });
+        return { canceled: false, filePath: res.filePath };
+    } catch (e) {
+        return { canceled: false, error: e.message };
+    }
+});
+
+// 打开指定目录（批量处理完成后统一打开结果目录）
+ipcMain.handle('open-output-dir', async (event, dir) => {
+    if (!dir || !fs.existsSync(dir)) return '目录不存在';
+    return await openDirInOS(dir);
 });
 
 // 单实例锁：防止重复打开（如 Windows 双击两次）导致浏览器登录态目录被占用
