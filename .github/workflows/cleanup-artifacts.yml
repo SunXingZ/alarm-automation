@@ -1,0 +1,41 @@
+name: Cleanup Artifacts
+
+# 手动触发：删除本仓库全部 Actions 制品，释放存储配额。
+# 背景：免费账户 Artifact 存储配额仅 500MB，安装包 300MB+，
+# 配额占满后所有工作流的上传都会报
+# "Failed to CreateArtifact: Artifact storage quota has been hit"。
+# 配额用量在制品删除后由 GitHub 每 6-12 小时重算。
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          total=0
+          # 逐批删除：始终取第 1 页直到为空（删除后剩余制品会前移）
+          while :; do
+            ids=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/artifacts?per_page=100" \
+              | jq -r '.artifacts[] | select(.expired == false) | .id')
+            if [ -z "$ids" ]; then break; fi
+            for id in $ids; do
+              echo "删除 artifact $id"
+              if curl -sf -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$REPO/actions/artifacts/$id"; then
+                total=$((total+1))
+              else
+                echo "删除 $id 失败（可能已被并发清理），跳过"
+              fi
+            done
+          done
+          echo "共删除 $total 个制品，配额用量由 GitHub 每 6-12 小时重算"

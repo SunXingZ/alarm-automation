@@ -81,3 +81,6 @@ jobs:
             dist/*.exe
             dist/*.blockmap
           if-no-files-found: error
+          # 免费账户 Artifact 存储配额仅 500MB，安装包 300MB+，默认保留 90 天极易占满。
+          # 制品只用于构建后临时下载，1 天后自动过期释放配额（不影响正式发布，正式发布应走 Releases）
+          retention-days: 1
