@@ -181,6 +181,14 @@ function parseSpeed(text) {
         const v = parseFloat(m[1]);
         if (Number.isFinite(v)) return v;
     }
+    // 兜底：裁剪区本来就是速度专属角落，小字 OCR 常丢掉 km/h 后缀，
+    // 且速度前缀字母不固定（G/V/S/E…，白名单外的会被 OCR 丢弃）。
+    // 无论前缀是什么字母，取文本中最后一个数字作为速度
+    const nums = s.match(/\d+(?:\.\d+)?/g);
+    if (nums && nums.length) {
+        const v = parseFloat(nums[nums.length - 1]);
+        if (Number.isFinite(v)) return v;
+    }
     return null;
 }
 

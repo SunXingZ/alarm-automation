@@ -1,6 +1,6 @@
 {
   "name": "alarm-automation-electron",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "营运车辆报警申诉自动化工具（人脸聚类 + 停靠段拼图）",
   "main": "electron-main.js",
   "scripts": {
@@ -30,6 +30,10 @@
       {
         "from": "models/insightface",
         "to": "models/insightface"
+      },
+      {
+        "from": "vendor/vc_redist.x64.exe",
+        "to": "vc_redist.x64.exe"
       }
     ],
     "asarUnpack": [
@@ -52,7 +56,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "allowElevation": true
+      "allowElevation": true,
+      "include": "build/installer.nsh"
     }
   },
   "devDependencies": {

@@ -1,0 +1,163 @@
+From 7a1474d718b13c8f15857f9a7a4094a9e0de478e Mon Sep 17 00:00:00 2001
+From: SunXingZ <sunjian.shanghai@foxmail.com>
+Date: Wed, 2 Sep 2026 04:10:57 +0000
+Subject: [PATCH 1/3] =?UTF-8?q?=E4=BF=AE=E5=A4=8D=20Windows=20=E5=AE=89?=
+ =?UTF-8?q?=E8=A3=85=E5=90=8E=E5=90=AF=E5=8A=A8=E6=8A=A5=E2=80=9CDLL=20ini?=
+ =?UTF-8?q?tialization=20routine=20failed=E2=80=9D=EF=BC=88=E9=94=99?=
+ =?UTF-8?q?=E8=AF=AF=201114=EF=BC=89=EF=BC=9A=E9=9A=8F=E5=8C=85=E5=AE=89?=
+ =?UTF-8?q?=E8=A3=85=20VC++=20=E8=BF=90=E8=A1=8C=E5=BA=93?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+部分用户系统缺少或版本过旧的 MSVC 2015-2022 x64 运行库，onnxruntime-node/sharp
+原生 DLL 初始化失败导致应用闪退。改动：
+- CI 构建时下载 vc_redist.x64.exe，经 extraResources 随安装包发布
+- NSIS 自定义脚本在安装时静默安装该运行库（已装新版自动跳过）
+- 主进程加载原生模块失败时弹出含官方下载地址的提示，而非无说明闪退
+- 打包校验脚本增加 vc_redist 随包检查
+---
+ .github/workflows/build-windows.yml | 10 ++++++++++
+ .gitignore                          |  3 +++
+ build/installer.nsh                 | 14 ++++++++++++++
+ electron-main.js                    | 26 ++++++++++++++++++++++----
+ package.json                        |  7 ++++++-
+ scripts/verify-pack-win.js          |  9 +++++++++
+ 6 files changed, 64 insertions(+), 5 deletions(-)
+ create mode 100644 build/installer.nsh
+
+diff --git a/.github/workflows/build-windows.yml b/.github/workflows/build-windows.yml
+index e947dbf..25477dc 100644
+--- a/.github/workflows/build-windows.yml
++++ b/.github/workflows/build-windows.yml
+@@ -35,6 +35,16 @@ jobs:
+       - name: Download face recognition models
+         run: npm run download-models
+ 
++      # VC++ 2015-2022 x64 运行库：随安装包发布并在 NSIS 安装时静默安装。
++      # 部分用户系统缺失或版本过旧，onnxruntime-node / sharp 的原生 DLL
++      # 会报 "DLL initialization routine failed"（错误 1114）
++      - name: Download VC++ redistributable
++        shell: pwsh
++        run: |
++          New-Item -ItemType Directory -Force -Path vendor | Out-Null
++          curl.exe -fsSL --retry 3 -o vendor/vc_redist.x64.exe https://aka.ms/vs/17/release/vc_redist.x64.exe
++          if ((Get-Item vendor/vc_redist.x64.exe).Length -lt 1MB) { throw 'vc_redist.x64.exe 下载不完整' }
++
+       # 构建前自检：确认 sharp / onnxruntime-node 两个原生模块在 Windows 上可正常加载
+       - name: Verify native modules load
+         run: >-
+diff --git a/.gitignore b/.gitignore
+index 3902f61..3ca7765 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -17,3 +17,6 @@ _报告/
+ # 人脸识别大模型（174MB，超 GitHub 单文件上限；用 npm run download-models 下载）
+ models/insightface/*.onnx
+ models/insightface/*.zip
++
++# VC++ 运行库安装器（构建时由 CI 下载，随安装包发布）
++vendor/
+diff --git a/build/installer.nsh b/build/installer.nsh
+new file mode 100644
+index 0000000..fadeb24
+--- /dev/null
++++ b/build/installer.nsh
+@@ -0,0 +1,14 @@
++; NSIS 自定义安装脚本（由 package.json build.nsis.include 引入）
++; 安装完成后静默安装 Microsoft Visual C++ 2015-2022 x64 运行库。
++; 原因：onnxruntime-node / sharp 的原生 DLL（onnxruntime.dll、libvips）依赖较新的
++; MSVC 运行时（msvcp140 / vcruntime140），部分用户系统缺失或版本过旧时，
++; 应用启动会报 "A dynamic link library (DLL) initialization routine failed"（错误 1114）。
++; vc_redist.x64.exe 通过 extraResources 随包发布在 resources 目录下。
++; 退出码说明：0 成功；3010 成功但需重启；1638 系统已装有更新版本 —— 均视为正常。
++!macro customInstall
++  IfFileExists "$INSTDIR\resources\vc_redist.x64.exe" 0 skip_vcredist
++    DetailPrint "正在安装 Microsoft Visual C++ 2015-2022 运行库..."
++    ExecWait '"$INSTDIR\resources\vc_redist.x64.exe" /install /quiet /norestart' $1
++    DetailPrint "VC++ 运行库安装退出码: $1"
++  skip_vcredist:
++!macroend
+diff --git a/electron-main.js b/electron-main.js
+index c03b2eb..07c130c 100644
+--- a/electron-main.js
++++ b/electron-main.js
+@@ -1,10 +1,28 @@
+-const { app, BrowserWindow, ipcMain } = require('electron');
++const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+ const { exec } = require('child_process');
+ const path = require('path');
+ const fs = require('fs-extra');
+-const { runAutomation } = require('./automation/index');
+-const BrowserManager = require('./automation/browser-manager');
+-const { getSpreadsheetTimeRange } = require('./automation/stop-finder');
++
++// 加载自动化模块（内含 onnxruntime-node / sharp 原生模块）。
++// 部分电脑缺少或版本过旧的 VC++ 运行库时，require 会抛
++// "A dynamic link library (DLL) initialization routine failed"（错误 1114）并直接崩溃；
++// 这里改为弹出可操作的提示后退出，而不是无说明地闪退
++let runAutomation, BrowserManager, getSpreadsheetTimeRange;
++try {
++    ({ runAutomation } = require('./automation/index'));
++    BrowserManager = require('./automation/browser-manager');
++    ({ getSpreadsheetTimeRange } = require('./automation/stop-finder'));
++} catch (e) {
++    dialog.showErrorBox(
++        '程序初始化失败',
++        `原生模块加载失败：${e.message}\n\n` +
++        '最常见原因是系统缺少或未安装最新版 Microsoft Visual C++ 2015-2022 运行库（x64），\n' +
++        '请从微软官网下载安装后重新运行本程序：\n' +
++        'https://aka.ms/vs/17/release/vc_redist.x64.exe\n\n' +
++        '（新版安装包已内置该运行库，重新安装本软件通常也可解决）'
++    );
++    process.exit(1);
++}
+ 
+ // 跨平台打开目录：macOS 用 open 命令（能确保 Finder 弹出并置前）
+ function openDirInOS(dir) {
+diff --git a/package.json b/package.json
+index 8284e54..44bc81a 100644
+--- a/package.json
++++ b/package.json
+@@ -30,6 +30,10 @@
+       {
+         "from": "models/insightface",
+         "to": "models/insightface"
++      },
++      {
++        "from": "vendor/vc_redist.x64.exe",
++        "to": "vc_redist.x64.exe"
+       }
+     ],
+     "asarUnpack": [
+@@ -52,7 +56,8 @@
+     "nsis": {
+       "oneClick": false,
+       "allowToChangeInstallationDirectory": true,
+-      "allowElevation": true
++      "allowElevation": true,
++      "include": "build/installer.nsh"
+     }
+   },
+   "devDependencies": {
+diff --git a/scripts/verify-pack-win.js b/scripts/verify-pack-win.js
+index 12a39ee..bb7765c 100644
+--- a/scripts/verify-pack-win.js
++++ b/scripts/verify-pack-win.js
+@@ -53,4 +53,13 @@ for (const m of ['det_10g.onnx', 'w600k_r50.onnx']) {
+     }
+ }
+ 
++// 4. VC++ 运行库安装器（extraResources 随包，NSIS 安装时静默执行，防错误 1114）
++const vcRedist = path.join(RES, 'vc_redist.x64.exe');
++if (fs.existsSync(vcRedist) && fs.statSync(vcRedist).size > 1024 * 1024) {
++    console.log(`OK: ${vcRedist} (${(fs.statSync(vcRedist).size / 1024 / 1024).toFixed(1)}MB)`);
++} else {
++    console.log(`MISSING: ${vcRedist}`);
++    fail = true;
++}
++
+ process.exit(fail ? 1 : 0);
+-- 
+2.43.0
+

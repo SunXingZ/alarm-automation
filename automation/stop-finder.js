@@ -106,14 +106,35 @@ function findStopsInWindow(rows, start, end) {
     return segs;
 }
 
+// 停靠地址优先关键词：换脸多发生在服务区/加油站等停靠休息处
+const STOP_ADDRESS_KEYWORDS = ['服务区', '加油站'];
+
+// 地址文本容错归一化：去空白（含全角空格）、去常见分隔标点、繁体转简体
+const TRAD_TO_SIMPL = { '區': '区', '務': '务' };
+function normalizeAddressText(addr) {
+    return String(addr || '')
+        .replace(/[\s\u3000]+/g, '')
+        .replace(/[，,、/\\|（）()【】\[\]·．.]/g, '')
+        .replace(/[\u4e00-\u9fff]/g, ch => TRAD_TO_SIMPL[ch] || ch);
+}
+
+// 判断停靠段地址是否命中优先关键词（含前/后边界行），命中返回该关键词，否则返回 null
+function stopAddressKeyword(stop) {
+    const norm = normalizeAddressText(stop.rows.map(r => r.address).join(''));
+    return STOP_ADDRESS_KEYWORDS.find(k => norm.includes(k)) || null;
+}
+
 // 在多个停靠段中，取“发生时刻”最靠近指定时间的那一段
 // 停靠段发生时刻取该段内第一条 0 速行的时间
+// 优先选地址含服务区/加油站的段（换脸多发生在停靠休息处），没有再按距离最近
 function pickClosestStop(stops, endTimeStr) {
     if (!stops || stops.length === 0) return null;
     const end = new Date(String(endTimeStr).replace(' ', 'T')).getTime();
+    const preferred = stops.filter(s => stopAddressKeyword(s));
+    const pool = preferred.length ? preferred : stops;
     let best = null;
     let bestDist = Infinity;
-    for (const s of stops) {
+    for (const s of pool) {
         const zeroRow = s.rows.find(r => r.speed === 0) || s.rows[0];
         const t = new Date(zeroRow.timeStr.replace(' ', 'T')).getTime();
         const dist = Math.abs(t - end);
@@ -125,7 +146,9 @@ function pickClosestStop(stops, endTimeStr) {
     return best;
 }
 
-// 查某时刻的速度：取表格中时间最接近的行（限 maxGapSec 秒内），返回速度或 null
+// 查某时刻的速度：取表格中时间最接近的行（限 maxGapSec 秒内），返回速度或 null。
+// 表格内无邻近行（长时间停靠时 GPS 采样稀疏）时插值判定：
+// 若该时刻落在两个相邻的 0 速行之间，说明整段都在静止，直接判 0
 function findSpeedAtTime(rows, timeStr, maxGapSec = 60) {
     const t = new Date(String(timeStr || '').replace(' ', 'T')).getTime();
     if (isNaN(t)) return null;
@@ -135,8 +158,19 @@ function findSpeedAtTime(rows, timeStr, maxGapSec = 60) {
         const dist = Math.abs(r.time.getTime() - t);
         if (dist < bestDist) { bestDist = dist; best = r; }
     }
-    if (!best || bestDist > maxGapSec * 1000) return null;
-    return best.speed;
+    if (best && bestDist <= maxGapSec * 1000) return best.speed;
+
+    // 插值兜底：找该时刻落入的相邻两行（rows 已按时间升序）
+    let next = null;
+    for (let i = 0; i < rows.length; i++) {
+        if (rows[i].time.getTime() >= t) { next = i; break; }
+    }
+    if (next !== null && next > 0) {
+        const prev = rows[next - 1];
+        const nxt = rows[next];
+        if (prev.speed === 0 && nxt.speed === 0) return 0;
+    }
+    return null;
 }
 
 // 主入口：给定表格文件与（已升序的）人脸时间点数组，
@@ -177,4 +211,4 @@ function getSpreadsheetTimeRange(filePath) {
     };
 }
 
-module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange, findSpeedAtTime };
+module.exports = { readSpreadsheet, findStopsInWindow, findStopsForFaceTimes, pickClosestStop, getSpreadsheetTimeRange, findSpeedAtTime, stopAddressKeyword };
