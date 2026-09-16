@@ -92,15 +92,20 @@ class BrowserManager {
     }
 
     async newPage() {
-        if (!this.browser) await this.launch(false);
-        try {
-            return await this.browser.newPage();
-        } catch (e) {
-            // Target.createTarget 失败等：浏览器状态异常（窗口被手动关闭/崩溃/标签页残留过多），
-            // 关闭并重新启动浏览器后重试一次；登录态保存在 profile 中不受影响
-            try { await this.close(); } catch (e2) { /* 旧浏览器可能已死，忽略 */ }
-            await this.launch(false);
-            return await this.browser.newPage();
+        // Target.createTarget 失败等：浏览器状态异常（窗口被手动关闭/崩溃/标签页残留过多）。
+        // 彻底清理后重启浏览器重试；登录态保存在 profile 中不受影响
+        for (let attempt = 0; attempt < 2; attempt++) {
+            if (!this.browser) await this.launch(false);
+            try {
+                return await this.browser.newPage();
+            } catch (e) {
+                // 清理旧浏览器并置空引用，确保下次 launch 真正重建
+                try { await this.close(); } catch (e2) { /* 旧浏览器可能已死 */ }
+                this.browser = null;
+                if (attempt === 1) {
+                    throw new Error(`无法打开新标签页（浏览器重启后仍失败）: ${e.message}`);
+                }
+            }
         }
     }
 
