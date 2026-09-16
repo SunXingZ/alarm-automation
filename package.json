@@ -1,6 +1,6 @@
 {
   "name": "alarm-automation-electron",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "营运车辆报警申诉自动化工具（人脸聚类 + 停靠段拼图）",
   "main": "electron-main.js",
   "scripts": {

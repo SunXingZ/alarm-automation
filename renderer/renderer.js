@@ -301,9 +301,13 @@ function updateExportSummary() {
         exportSummary.textContent = '';
         return;
     }
-    const ok = exportResults.filter(r => r.status === 'exported' || r.status === 'processed').length;
+    const ok = exportResults.filter(r => r.status === 'exported').length; // 可处理 = 已导出但尚未处理（口径与一键处理一致）
+    const done = exportResults.filter(r => r.status === 'processed').length;
     const fail = exportResults.filter(r => r.status === 'failed').length;
-    exportSummary.textContent = `共 ${exportResults.length} 条 · 可处理 ${ok}` + (fail ? ` · 失败 ${fail}` : '');
+    let summary = `共 ${exportResults.length} 条 · 可处理 ${ok}`;
+    if (done) summary += ` · 已处理 ${done}`;
+    if (fail) summary += ` · 失败 ${fail}`;
+    exportSummary.textContent = summary;
     processAllBtn.disabled = batchRunning || exporting || !exportResults.some(r => r.status === 'exported');
 }
 
@@ -321,7 +325,6 @@ function renderExportRow(index) {
         exportResultBody.appendChild(tr);
     }
     const canDownload = !!r.filePath;
-    const canProcess = r.status === 'exported';
     tr.innerHTML = `
         <td>${r.plate || '-'}</td>
         <td class="time-cell">${r.startTime || '-'}</td>
@@ -342,15 +345,26 @@ function renderExportRow(index) {
         if (res && res.error) alert(`保存失败: ${res.error}`);
     });
 
+    // 处理/导入按钮保持常亮可点；运行时点击由 processSingleComplaint / startProcess 内的防重入保护拦截
     const prBtn = document.createElement('button');
     prBtn.type = 'button';
     prBtn.className = 'mini-btn';
     prBtn.textContent = '处理申诉';
-    prBtn.disabled = !canProcess || batchRunning || processRunning;
     prBtn.addEventListener('click', () => processSingleComplaint(index));
 
-    ops.appendChild(dlBtn);
+    // 仅导入：填入处理申诉选项卡但不自动执行（用户手动点“开始自动化”）
+    const imBtn = document.createElement('button');
+    imBtn.type = 'button';
+    imBtn.className = 'mini-btn';
+    imBtn.textContent = '导入表格';
+    imBtn.addEventListener('click', () => {
+        loadComplaintIntoProcessForm(exportResults[index]);
+        switchTab('tab-process');
+    });
+
     ops.appendChild(prBtn);
+    ops.appendChild(imBtn);
+    ops.appendChild(dlBtn);
 }
 
 // 重置结果表格（重新导出时清空旧数据）
@@ -389,6 +403,7 @@ exportBtn.addEventListener('click', async () => {
     exporting = false;
     exportBtn.disabled = false;
     exportBtn.querySelector('.btn-text').textContent = '开始导出';
+    updateExportSummary(); // exporting 复位后刷新一键处理按钮的可用状态
 });
 
 // ==================== 处理申诉（单个 / 一键批量） ====================
@@ -434,7 +449,6 @@ processAllBtn.addEventListener('click', async () => {
     processAllBtn.disabled = true;
     exportBtn.disabled = true;
     processAllBtn.querySelector('.btn-text').textContent = '批量处理中...';
-    const savedDirs = [];
     let failCount = 0;
 
     for (const { r, i } of list) {
@@ -445,7 +459,6 @@ processAllBtn.addEventListener('click', async () => {
 
         const result = await startProcess({ silent: true, openDirOnFinish: false });
         if (result.success) {
-            if (result.savedDirs && result.savedDirs.length) savedDirs.push(...result.savedDirs);
             r.status = 'processed';
         } else {
             r.status = 'failed';
@@ -456,11 +469,9 @@ processAllBtn.addEventListener('click', async () => {
         updateExportSummary();
     }
 
-    // 批量结束后统一打开结果目录
-    if (savedDirs.length) {
-        const err = await window.electronAPI.openOutputDir(savedDirs[savedDirs.length - 1]);
-        if (err) appendLog(logOutput, `自动打开保存目录失败: ${err}`);
-    }
+    // 批量结束后统一打开输出根目录（AlarmAutomationOutput）
+    const err = await window.electronAPI.openOutputDir('');
+    if (err) appendLog(logOutput, `自动打开保存目录失败: ${err}`);
     alert(`批量处理完成：成功 ${list.length - failCount}，失败 ${failCount}`);
 
     batchRunning = false;

@@ -57,6 +57,8 @@ class BrowserManager {
     }
 
     async launch(headless = true) {
+        // 已启动则直接复用（保持浏览器进程存活可保留登录态，避免每次都要重新登录）
+        if (this.browser) return;
         const baseOpts = {
             headless,   // puppeteer >= 22 已移除 'new' 字符串值，true 即新的无头模式
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -90,8 +92,16 @@ class BrowserManager {
     }
 
     async newPage() {
-        if (!this.browser) await this.launch();
-        return await this.browser.newPage();
+        if (!this.browser) await this.launch(false);
+        try {
+            return await this.browser.newPage();
+        } catch (e) {
+            // Target.createTarget 失败等：浏览器状态异常（窗口被手动关闭/崩溃/标签页残留过多），
+            // 关闭并重新启动浏览器后重试一次；登录态保存在 profile 中不受影响
+            try { await this.close(); } catch (e2) { /* 旧浏览器可能已死，忽略 */ }
+            await this.launch(false);
+            return await this.browser.newPage();
+        }
     }
 
     async close() {

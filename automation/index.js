@@ -20,6 +20,26 @@ async function runAutomation(options = {}, log = console.log) {
     // 运输车辆监控平台筛选条件（不勾选则为空，查询时不限制）
     const filters = { alarmTypes: alarmTypes || [], riskLevels: riskLevels || [], repairStatus: repairStatus || [] };
 
+    // 表格文件存在性校验（文件可能被手动移动/删除）：缺失时按无表格模式继续（照片/人脸处理不受影响）
+    let tableFile = spreadsheetPath;
+    if (tableFile && !fs.existsSync(tableFile)) {
+        log(`警告: 表格文件不存在（${tableFile}），已按无表格模式处理`);
+        tableFile = null;
+    }
+
+    // 输出文件夹命名：车牌_开始日期_开始HHmm-结束HHmm（不同时段窗口各自独立文件夹）
+    // 目录名安全化（去除路径非法字符）——必须先定义，orderDirName 依赖它
+    const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim();
+    const hhmm = (s, fallback) => {
+        const m = String(s || '').match(/(\d{1,2}):(\d{2})/);
+        if (!m) return fallback;
+        return m[1].padStart(2, '0') + m[2];
+    };
+    const orderDirName = (order) => {
+        const date = sanitize(String(order.startDate || '')).slice(0, 10);
+        return sanitize(order.plate || '') + '_' + date + '_' + hhmm(order.startDate, '0000') + '-' + hhmm(order.endDate, '2359');
+    };
+
     try {
         log('开始自动化流程...');
         // 登录需用户手动在浏览器窗口中操作，必须使用可见窗口（有头模式）
@@ -76,8 +96,6 @@ async function runAutomation(options = {}, log = console.log) {
         }
         fs.ensureDirSync(outputDir);
 
-        // 目录名安全化（去除路径非法字符）
-        const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim();
         let totalScreenshots = 0;
         let totalFaces = 0;
         const savedDirs = []; // 实际保存了人脸的目录（用于完成后自动打开）
@@ -140,7 +158,14 @@ async function runAutomation(options = {}, log = console.log) {
             }
 
             // 提前解析表格（供速度过滤交叉验证与后续停靠段匹配共用）
-            const parsed = spreadsheetPath ? readSpreadsheet(spreadsheetPath) : null;
+            let parsed = null;
+            if (tableFile) {
+                try {
+                    parsed = readSpreadsheet(tableFile);
+                } catch (e) {
+                    log(`解析表格失败: ${e.message}`);
+                }
+            }
             if (parsed && parsed.error) {
                 log(`解析表格失败: ${parsed.error}`);
             }
@@ -199,12 +224,15 @@ async function runAutomation(options = {}, log = console.log) {
             };
             let orderDir;
             try {
-                orderDir = makeOrderDir(path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10)));
+                const dirName = orderDirName(order);
+                const full = path.join(outputDir, dirName);
+                log(`[诊断] 订单目录 = ${full}`);
+                orderDir = makeOrderDir(full);
             } catch (err) {
-                log(`输出目录创建失败（${err.message}），尝试备用目录`);
+                log(`[诊断] 创建订单目录失败（${err.message}），尝试备用目录`);
                 try {
                     // 备用1：输出目录下换一个子目录名（避免与被占用的旧目录冲突）
-                    orderDir = makeOrderDir(path.join(outputDir, sanitize(order.plate) + '_' + sanitize(order.startDate).slice(0, 10) + '_' + Date.now()));
+                    orderDir = makeOrderDir(path.join(outputDir, orderDirName(order) + '_' + Date.now()));
                 } catch (err2) {
                     try {
                         // 备用2：直接写输出根目录（保证该车牌的结果一定保存）
@@ -255,15 +283,28 @@ async function runAutomation(options = {}, log = console.log) {
                 }
             }
             faceSet.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+            // 同车牌同日期存在多个时段窗口时，文件编号接续已有文件（避免第二次处理覆盖第一次的结果）
+            const scanMax = (prefix) => {
+                let max = 0;
+                try {
+                    for (const f of fs.readdirSync(orderDir)) {
+                        const m = f.match(new RegExp('^' + prefix + '_(\\d{3})\\.jpg$'));
+                        if (m) max = Math.max(max, parseInt(m[1], 10));
+                    }
+                } catch (e) { /* 目录不可读时从 1 开始 */ }
+                return max;
+            };
+            let faceNo = scanMax('face');
             for (let i = 0; i < faceSet.length; i++) {
-                const outputPath = path.join(orderDir, `face_${String(i + 1).padStart(3, '0')}.jpg`);
+                faceNo++;
+                const outputPath = path.join(orderDir, `face_${String(faceNo).padStart(3, '0')}.jpg`);
                 await compressToJpg(faceSet[i].path, outputPath, 3);
                 log(`保存: ${outputPath}（${faceSet[i].time}）`);
             }
 
             if (!parsed || parsed.error) { log('表格不可用，跳过停靠段拼图'); continue; }
             const tOf = (s) => new Date(String(s).replace(' ', 'T'));
-            let stopNo = 0;
+            let stopNo = scanMax('stop');
             for (const ch of changes) {
                 const stops = findStopsInWindow(parsed.rows, tOf(ch.old.time), tOf(ch.new.time));
                 // 窗口内只取最靠近窗口终点（新脸出现时刻）的那一次停靠
@@ -294,7 +335,7 @@ async function runAutomation(options = {}, log = console.log) {
             const order0 = orders[0] || {};
             let targetDir = savedDirs.length ? savedDirs[savedDirs.length - 1] : null;
             if (!targetDir) {
-                targetDir = path.join(outputDir, sanitize(order0.plate || '未知车牌') + '_' + sanitize(String(order0.startDate || '')).slice(0, 10));
+                targetDir = path.join(outputDir, orderDirName(order0));
                 try {
                     fs.ensureDirSync(targetDir);
                 } catch (e) {
@@ -318,7 +359,7 @@ async function runAutomation(options = {}, log = console.log) {
         return { success: false, error: err.message };
     } finally {
         await closeWorker();
-        await BrowserManager.close();
+        // 浏览器保持运行（不关闭），登录态跨次运行保留；应用退出时统一关闭
     }
 }
 

@@ -124,10 +124,12 @@ class ServiceB {
         }
     }
 
-    // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL，并返回该行报警时间
-    async collectRowPhotos(page, idx) {
-        // 读取该行“查看照片”按钮中的报警 id 与整行报警时间
-        const rowInfo = await page.evaluate((i) => {
+    // 采集第 idx 行“查看照片”弹窗内的人脸截图 URL，并返回该行报警时间。
+    // 校验行内车牌与目标车牌一致（平台搜索在无精确匹配时可能返回其他车辆的数据，
+    // 不校验会把别的车牌的照片存进当前车牌的文件夹）
+    async collectRowPhotos(page, idx, plate) {
+        // 读取该行“查看照片”按钮中的报警 id、整行报警时间与行内车牌
+        const rowInfo = await page.evaluate((i, targetPlate) => {
             const els = document.querySelectorAll('a[title="查看照片"]');
             const a = els[i];
             if (!a) return null;
@@ -135,13 +137,18 @@ class ServiceB {
             const m = onclick.match(/'(\d+)'/);
             const tr = a.closest('tr') || a.closest('.datagrid-row');
             let time = '';
+            let plateMatched = true; // 行结构异常（读不到车牌）时不做拦截，保持原有行为
             if (tr) {
                 const tm = (tr.textContent || '').match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
                 if (tm) time = tm[1];
+                // 平台显示格式可能为 沪G-B7688，去掉横线/空格后比对
+                const norm = (s) => String(s || '').replace(/[-\s]/g, '');
+                plateMatched = norm(tr.textContent).includes(norm(targetPlate));
             }
-            return { alarmId: m ? m[1] : null, time };
-        }, idx);
-        if (!rowInfo || !rowInfo.alarmId) return { urls: [], time: '' };
+            return { alarmId: m ? m[1] : null, time, plateMatched };
+        }, idx, plate);
+        if (!rowInfo || !rowInfo.alarmId) return { urls: [], time: '', skipped: false };
+        if (!rowInfo.plateMatched) return { urls: [], time: rowInfo.time || '', skipped: true };
 
         // 点击该行“查看照片”
         await page.evaluate((i) => {
@@ -151,7 +158,7 @@ class ServiceB {
 
         // 等待详情 iframe 加载到当前报警
         const frame = await waitDetailFrame(page, rowInfo.alarmId);
-        if (!frame) return { urls: [], time: rowInfo.time || '' };
+        if (!frame) return { urls: [], time: rowInfo.time || '', skipped: false };
 
         // 等待人脸截图出现（非站点本地资源的真实图片）
         try {
@@ -172,16 +179,16 @@ class ServiceB {
                 .map(im => im.src)
                 .filter(s => s && s.startsWith('http') && !s.startsWith(site) && !s.startsWith('data:'));
         });
-        return { urls: [...new Set(srcs)], time: rowInfo.time || '' };
+        return { urls: [...new Set(srcs)], time: rowInfo.time || '', skipped: false };
     }
 
-    // 采集当前页所有含“查看照片”的行的人脸截图，返回 [{ urls, time }]
-    async collectCurrentPagePhotos(page) {
+    // 采集当前页所有含“查看照片”的行的人脸截图，返回 [{ urls, time, skipped }]
+    async collectCurrentPagePhotos(page, plate) {
         const photoCount = await page.evaluate(() => document.querySelectorAll('a[title="查看照片"]').length);
         const items = [];
         for (let i = 0; i < photoCount; i++) {
             try {
-                items.push(await this.collectRowPhotos(page, i));
+                items.push(await this.collectRowPhotos(page, i, plate));
             } catch (e) {
                 this.log(`第 ${i + 1} 行获取照片失败: ${e.message}`);
             }
@@ -264,9 +271,10 @@ class ServiceB {
                 ).catch(() => {});
                 await new Promise(r => setTimeout(r, 1500)); // 等待数据行渲染
             }
-            const pageItems = await this.collectCurrentPagePhotos(page);
+            const pageItems = await this.collectCurrentPagePhotos(page, plate);
             const pageCount = pageItems.reduce((s, it) => s + it.urls.length, 0);
-            this.log(`第 ${pageNum} 页采集到 ${pageCount} 张截图`);
+            const skippedCount = pageItems.filter(it => it.skipped).length;
+            this.log(`第 ${pageNum} 页采集到 ${pageCount} 张截图` + (skippedCount ? `，跳过 ${skippedCount} 行（车牌不符）` : ''));
             for (const item of pageItems) {
                 for (const url of item.urls) photos.push({ url, time: item.time });
             }

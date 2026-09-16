@@ -117,7 +117,9 @@ ipcMain.handle('export-complaint-tables', async () => {
 // 下载表格到本地（另存为对话框）
 ipcMain.handle('save-exported-file', async (event, { srcPath, suggestedName }) => {
     try {
-        const res = await dialog.showSaveDialog(mainWindow, { defaultPath: suggestedName || '导出表格.xls' });
+        // 窗口可能已关闭（销毁后不可作为对话框宿主），此时用无宿主对话框
+        const host = (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : undefined;
+        const res = await dialog.showSaveDialog(host, { defaultPath: suggestedName || '导出表格.xls' });
         if (res.canceled || !res.filePath) return { canceled: true };
         await fs.copy(srcPath, res.filePath, { overwrite: true });
         return { canceled: false, filePath: res.filePath };
@@ -126,10 +128,11 @@ ipcMain.handle('save-exported-file', async (event, { srcPath, suggestedName }) =
     }
 });
 
-// 打开指定目录（批量处理完成后统一打开结果目录）
+// 打开指定目录（一键处理完成后打开输出根目录；传空则打开默认输出目录）
 ipcMain.handle('open-output-dir', async (event, dir) => {
-    if (!dir || !fs.existsSync(dir)) return '目录不存在';
-    return await openDirInOS(dir);
+    const target = dir || path.join(app.getPath('documents'), 'AlarmAutomationOutput');
+    if (!fs.existsSync(target)) return '目录不存在';
+    return await openDirInOS(target);
 });
 
 // 单实例锁：防止重复打开（如 Windows 双击两次）导致浏览器登录态目录被占用
@@ -138,9 +141,12 @@ if (!gotTheLock) {
     app.quit();
 } else {
     app.on('second-instance', () => {
-        if (mainWindow) {
+        // 窗口可能已被关闭（macOS 关窗后应用仍存活），必须先检查是否已销毁
+        if (mainWindow && !mainWindow.isDestroyed()) {
             if (mainWindow.isMinimized()) mainWindow.restore();
             mainWindow.focus();
+        } else if (!mainWindow) {
+            createWindow();
         }
     });
 
