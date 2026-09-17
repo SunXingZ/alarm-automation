@@ -266,10 +266,12 @@ const exportLogStatus = document.getElementById('export-log-status');
 const exportSummary = document.getElementById('export-summary');
 const exportResultBody = document.getElementById('export-result-body');
 
-let exportResults = [];          // 导出结果（含实时状态）
+let exportResults = [];          // 导出结果（含实时状态，多批次累积）
 const exportRowMap = new Map();  // index -> tr 行元素
 let exporting = false;
 let batchRunning = false;
+let batchOffset = 0;             // 当前批次写入累积表格的起始下标
+const processedOrderNos = new Set(); // 本次会话已成功处理过的申诉（一键处理去重，防重复处理同一申诉）
 
 const setExportStatus = (text, cls) => {
     exportLogStatus.textContent = text;
@@ -279,8 +281,9 @@ const setExportStatus = (text, cls) => {
 window.electronAPI.onExportLogMessage((message) => appendLog(exportLogOutput, message));
 window.electronAPI.onExportProgress((p) => {
     if (!p || typeof p.index !== 'number') return;
-    exportResults[p.index] = { ...(exportResults[p.index] || {}), ...p };
-    renderExportRow(p.index);
+    const idx = batchOffset + p.index;
+    exportResults[idx] = { ...(exportResults[idx] || {}), ...p };
+    renderExportRow(idx);
     updateExportSummary();
 });
 
@@ -301,14 +304,14 @@ function updateExportSummary() {
         exportSummary.textContent = '';
         return;
     }
-    const ok = exportResults.filter(r => r.status === 'exported').length; // 可处理 = 已导出但尚未处理（口径与一键处理一致）
+    const ok = exportResults.filter(r => r.status === 'exported' && (!r.orderNo || !processedOrderNos.has(r.orderNo))).length; // 可处理 = 已导出、未处理过（口径与一键处理一致）
     const done = exportResults.filter(r => r.status === 'processed').length;
     const fail = exportResults.filter(r => r.status === 'failed').length;
     let summary = `共 ${exportResults.length} 条 · 可处理 ${ok}`;
     if (done) summary += ` · 已处理 ${done}`;
     if (fail) summary += ` · 失败 ${fail}`;
     exportSummary.textContent = summary;
-    processAllBtn.disabled = batchRunning || exporting || !exportResults.some(r => r.status === 'exported');
+    processAllBtn.disabled = batchRunning || exporting || !exportResults.some(r => r.status === 'exported' && (!r.orderNo || !processedOrderNos.has(r.orderNo)));
 }
 
 // 渲染/更新某一行导出结果（含下载与处理按钮）
@@ -367,36 +370,37 @@ function renderExportRow(index) {
     ops.appendChild(dlBtn);
 }
 
-// 重置结果表格（重新导出时清空旧数据）
-function resetExportTable() {
-    exportResults = [];
-    exportRowMap.clear();
-    exportResultBody.innerHTML = '<tr class="empty-row"><td colspan="5">正在导出…</td></tr>';
-    updateExportSummary();
-}
-
 exportBtn.addEventListener('click', async () => {
     if (exporting || batchRunning || processRunning) return;
+    // 读取本次导出数量（正整数；空/非法 = 不限制）
+    const limitVal = document.getElementById('export-limit').value.trim();
+    const limit = limitVal === '' ? 0 : (parseInt(limitVal, 10) || 0);
+    if (limitVal !== '' && limit <= 0) {
+        alert('导出数量需为正整数，或留空表示全部');
+        return;
+    }
     exporting = true;
     exportBtn.disabled = true;
     exportBtn.querySelector('.btn-text').textContent = '导出中...';
     exportLogOutput.innerHTML = '';
-    resetExportTable();
+    batchOffset = exportResults.length; // 新批次追加到既有记录之后（累积显示）
     setExportStatus('运行中', 'running');
 
-    const result = await window.electronAPI.exportComplaintTables();
+    const result = await window.electronAPI.exportComplaintTables(limit);
 
     if (result && result.success) {
-        // 以最终返回的完整结果为准重绘
-        exportResults = result.results || [];
-        exportResultBody.innerHTML = '';
-        exportRowMap.clear();
-        exportResults.forEach((_, i) => renderExportRow(i));
+        // 以本次批次结果为准，追加/补全到累积表格（实时进度已画的行不覆盖）
+        const results = result.results || [];
+        results.forEach((item, i) => {
+            const idx = batchOffset + i;
+            exportResults[idx] = { ...(exportResults[idx] || {}), ...item };
+            renderExportRow(idx);
+        });
         updateExportSummary();
-        const fail = exportResults.filter(r => r.status === 'failed').length;
-        setExportStatus(fail ? `完成（${fail} 条失败）` : '完成', fail ? 'error' : 'done');
+        const fail = exportResults.slice(batchOffset).filter(r => r && r.status === 'failed').length;
+        setExportStatus(fail ? `完成（新增 ${results.length} 条，${fail} 条失败）` : `完成（新增 ${results.length} 条）`, fail ? 'error' : 'done');
     } else {
-        exportResultBody.innerHTML = `<tr class="empty-row"><td colspan="5">导出失败：${(result && result.error) || '未知错误'}</td></tr>`;
+        appendLog(exportLogOutput, `导出失败：${(result && result.error) || '未知错误'}`);
         setExportStatus('失败', 'error');
     }
 
@@ -433,15 +437,24 @@ async function processSingleComplaint(index) {
 
     r.status = result.success ? 'processed' : 'failed';
     r.error = result.error || '';
+    if (result.success && r.orderNo) processedOrderNos.add(r.orderNo); // 单条处理成功同样记入，一键处理不再重复碰
     if (row) renderExportRow(index);
     updateExportSummary();
 }
 
-// 一键处理：按顺序把每个已导出的表格导入并执行自动化处理
+// 一键处理：按顺序把每个已导出且未处理过的表格导入并执行自动化处理
+// （同一条申诉即使多批次重复出现在表格中，也只处理一次；单条处理按钮不受此限制，可随时重跑）
 processAllBtn.addEventListener('click', async () => {
+    const seen = new Set();
     const list = exportResults
         .map((r, i) => ({ r, i }))
-        .filter(x => x.r.status === 'exported');
+        .filter(x => x.r.status === 'exported' && (!x.r.orderNo || !processedOrderNos.has(x.r.orderNo)))
+        .filter(x => {
+            if (!x.r.orderNo) return true; // 无单号的行不去重
+            if (seen.has(x.r.orderNo)) return false; // 同一申诉只处理一次
+            seen.add(x.r.orderNo);
+            return true;
+        });
     if (!list.length || batchRunning || processRunning || exporting) return;
     if (!confirm(`共 ${list.length} 个表格，将依次自动处理（每个处理完再处理下一个），确认开始？`)) return;
 
@@ -460,6 +473,7 @@ processAllBtn.addEventListener('click', async () => {
         const result = await startProcess({ silent: true, openDirOnFinish: false });
         if (result.success) {
             r.status = 'processed';
+            if (r.orderNo) processedOrderNos.add(r.orderNo);
         } else {
             r.status = 'failed';
             r.error = result.error || '';

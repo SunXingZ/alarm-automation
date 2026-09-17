@@ -28,17 +28,23 @@ const MOCK_COMPLAINTS = [
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim();
 
+// 本次运行已成功导出的申诉工单号（仅本次运行有效，应用重启后清空）。
+// 用于“再次点击导出时过滤掉已导出的数据”，避免重复导出
+const exportedOrderNos = new Set();
+
 class ExportFlow {
     /**
      * @param {object} opts
      * @param {function} opts.log        日志输出（发送到渲染进程）
      * @param {string}   opts.outputDir  输出根目录（导出表格存放于此）
      * @param {function} [opts.onProgress] 每条申诉进度回调 { index, total, ...result }
+     * @param {number}   [opts.limit]    本次导出数量上限（0/空 = 不限制）
      */
-    constructor({ log = console.log, outputDir, onProgress } = {}) {
+    constructor({ log = console.log, outputDir, onProgress, limit = 0 } = {}) {
         this.log = log;
         this.outputDir = outputDir;
         this.onProgress = onProgress;
+        this.limit = Math.max(0, parseInt(limit, 10) || 0); // 正整数，非法按 0（不限制）
     }
 
     // ==================== 对外入口 ====================
@@ -67,6 +73,26 @@ class ExportFlow {
                 this.log(`共找到 ${complaints.length} 条待处理申诉，开始在 ${SITE2_NAME} 导出轨迹表格`);
             }
 
+            // ---- 过滤本次运行已导出的申诉（按工单号去重）----
+            const fresh = complaints.filter(c => !exportedOrderNos.has(c.orderNo));
+            const skippedCount = complaints.length - fresh.length;
+            if (skippedCount > 0) {
+                this.log(`已跳过 ${skippedCount} 条本次已导出的申诉（去重）`);
+            }
+            // ---- 数量限制：最多导出前 N 条 ----
+            let target = fresh;
+            if (this.limit > 0) {
+                if (fresh.length > this.limit) {
+                    target = fresh.slice(0, this.limit);
+                    this.log(`本次导出数量上限 ${this.limit} 条，仅导出前 ${this.limit} 条`);
+                }
+            }
+            if (!target.length) {
+                this.log('没有新的待导出申诉（已全部导出过），任务结束');
+                return { success: true, results: [] };
+            }
+            complaints = target;
+
             // ---- 第二步：网站2 逐条导出轨迹表格（门户 + iframe 内接口调用）----
             const page2 = await BrowserManager.newPage();
             const results = [];
@@ -86,6 +112,7 @@ class ExportFlow {
                         const filePath = await this.exportTrack(page2, frame, c);
                         item.status = 'exported';
                         item.filePath = filePath;
+                        if (c.orderNo) exportedOrderNos.add(c.orderNo); // 记录本次已导出，后续点导出去重
                         pageFailures = 0;
                         this.log(`[${i + 1}/${complaints.length}] ${c.plate} 导出成功: ${path.basename(filePath)}`);
                     } catch (e) {
@@ -104,6 +131,7 @@ class ExportFlow {
                                 const filePath = await this.exportTrack(page2, frame, c);
                                 item.status = 'exported';
                                 item.filePath = filePath;
+                                if (c.orderNo) exportedOrderNos.add(c.orderNo); // 记录本次已导出，后续点导出去重
                                 pageFailures = 0;
                                 this.log(`[${i + 1}/${complaints.length}] ${c.plate} 重试导出成功: ${path.basename(filePath)}`);
                                 this.emitProgress(i, complaints.length, item);

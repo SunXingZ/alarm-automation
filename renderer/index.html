@@ -29,10 +29,20 @@
                     <h2>第一步：导出轨迹表格</h2>
                 </div>
                 <small class="filter-tip">流程：打开报警申诉列表（如登录过期需在弹出的浏览器窗口手动登录）→ 读取“待处理”申诉的车牌号与开始/结束时间 → 在车辆监控平台逐条回放轨迹并导出表格（保存弹窗已静默接管，无需人工确认）</small>
-                <button id="export-btn" class="primary-btn">
-                    <span class="btn-icon">▶</span>
-                    <span class="btn-text">开始导出</span>
-                </button>
+                <div class="field field-full">
+                    <label for="export-limit">本次导出数量</label>
+                    <div class="limit-row">
+                        <div class="number-wrap">
+                            <input type="number" id="export-limit" min="1" step="1" value="5" placeholder="全部" autocomplete="off">
+                            <span class="unit">条</span>
+                        </div>
+                        <button id="export-btn" class="primary-btn limit-btn">
+                            <span class="btn-icon">▶</span>
+                            <span class="btn-text">开始导出</span>
+                        </button>
+                    </div>
+                    <small class="filter-tip">留空 = 全部导出；每次最多导出该数量的新申诉，已导出的自动跳过（去重，应用重启后重置）</small>
+                </div>
             </div>
 
             <div class="card">

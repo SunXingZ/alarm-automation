@@ -93,7 +93,8 @@ ipcMain.handle('start-automation', async (event, payload) => {
 });
 
 // 导出申诉表格：采集“待处理”申诉并在监控平台导出轨迹表格
-ipcMain.handle('export-complaint-tables', async () => {
+// payload.limit：本次导出数量上限（0/空 = 不限制）
+ipcMain.handle('export-complaint-tables', async (event, payload) => {
     const log = (message) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('export-log-message', message);
@@ -105,7 +106,7 @@ ipcMain.handle('export-complaint-tables', async () => {
         }
     };
     const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
-    const flow = new ExportFlow({ log, outputDir, onProgress });
+    const flow = new ExportFlow({ log, outputDir, onProgress, limit: (payload && payload.limit) || 0 });
     try {
         return await flow.run();
     } catch (e) {

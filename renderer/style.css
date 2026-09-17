@@ -154,7 +154,8 @@ body {
 
 .field input[type="text"],
 .field input[type="password"],
-.field input[type="date"] {
+.field input[type="date"],
+.field input[type="number"] {
     width: 100%;
     padding: 10px 14px;
     font-size: 14px;
@@ -341,6 +342,77 @@ input[type="range"]::-moz-range-thumb {
     cursor: pointer;
     box-shadow: 0 6px 16px rgba(74, 144, 217, 0.35);
     transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+}
+
+/* 本次导出数量 + 开始导出（一行布局） */
+.limit-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.number-wrap {
+    position: relative;
+    flex: 0 0 170px;
+}
+
+.number-wrap input[type="number"] {
+    width: 100%;
+    padding: 12px 44px 12px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #2c3e50;
+    border: 1px solid #c9d6e4;
+    border-radius: 12px;
+    background: #f4f8fd;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.number-wrap input[type="number"]:focus {
+    outline: none;
+    border-color: #4a90d9;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.18);
+}
+
+.number-wrap input[type="number"]::-webkit-outer-spin-button,
+.number-wrap input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.number-wrap .unit {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #8892a0;
+    font-size: 13px;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.number-wrap input[type="number"]::placeholder {
+    color: #b6c2d0;
+    font-weight: 400;
+}
+
+.limit-btn {
+    flex: 1;
+    margin: 0;
+}
+
+@media (max-width: 460px) {
+    .limit-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .number-wrap {
+        flex: 1;
+    }
 }
 
 .primary-btn:hover:not(:disabled) {

@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 读取表格首末行 GPS 时间（用于自动填充查询条件）
     getSpreadsheetRange: (filePath) => ipcRenderer.invoke('get-spreadsheet-range', filePath),
     // ===== 导出申诉表格 =====
-    exportComplaintTables: () => ipcRenderer.invoke('export-complaint-tables'),
+    exportComplaintTables: (limit) => ipcRenderer.invoke('export-complaint-tables', { limit: limit || 0 }),
     onExportLogMessage: (callback) => ipcRenderer.on('export-log-message', (event, message) => callback(message)),
     onExportProgress: (callback) => ipcRenderer.on('export-progress', (event, progress) => callback(progress)),
     // 将导出的表格另存到用户指定位置
