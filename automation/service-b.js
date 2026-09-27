@@ -225,30 +225,52 @@ class ServiceB {
         if (filters.repairStatus && filters.repairStatus.length) {
             await setWidgetValue(page, '#repairStatus', 'combobox', 'setValues', filters.repairStatus, this.log);
         }
-        // 触发查询（数据表格若未就绪 doSearch 内部也会抛同类错误，同样重试）
-        for (let i = 0; i < 20; i++) {
-            const ok = await page.evaluate(() => {
-                try {
-                    if (typeof doSearch === 'function') { doSearch(1); return true; }
-                    return false;
-                } catch (e) {
-                    return false;
-                }
-            }).catch(() => false);
-            if (ok) break;
+        // 触发查询并等待数据加载完成。
+        // 注意：批量连续处理时接口可能变慢，固定等 3 秒易读到上一车牌查询的旧数据
+        // （旧行车牌与当前车牌不符会被过滤，导致"有表格但无照片"）。改为等待查询
+        // 接口返回 + 表格渲染出目标车牌的行，若仍为 0 条则重试一次查询。
+        const doQuery = async () => {
+            // 注册查询接口响应监听（必须在触发查询前注册，防止接口瞬时返回错过）
+            const queryResp = page.waitForResponse(
+                (res) => res.url().includes('queryUserAlarmList') && res.status() === 200,
+                { timeout: 20000 }
+            ).catch(() => null);
+            // 触发查询（数据表格若未就绪 doSearch 内部也会抛同类错误，同样重试）
+            for (let i = 0; i < 20; i++) {
+                const ok = await page.evaluate(() => {
+                    try {
+                        if (typeof doSearch === 'function') { doSearch(1); return true; }
+                        return false;
+                    } catch (e) {
+                        return false;
+                    }
+                }).catch(() => false);
+                if (ok) break;
+                await new Promise(r => setTimeout(r, 500));
+            }
+            await queryResp; // 等待查询接口真正返回（批量接口慢时不会读到旧数据）
+            // 等待表格渲染出目标车牌的行（精确搜索下第一页应包含）；0 条时最多等 20 秒兜底
+            await page.waitForFunction((pl) => {
+                const norm = (s) => String(s || '').replace(/[-\s]/g, '');
+                return Array.from(document.querySelectorAll('.datagrid-body tr'))
+                    .some(tr => norm(tr.textContent).includes(norm(pl)));
+            }, { timeout: 20000 }, plate).catch(() => {});
             await new Promise(r => setTimeout(r, 500));
+            // 读取记录总数与每页条数，计算总页数
+            return await page.evaluate(() => {
+                const totalText = (document.querySelector('#table_data_count') || {}).textContent || '';
+                const m = totalText.match(/(\d+)/);
+                const total = m ? parseInt(m[1], 10) : 0;
+                const sizeSel = document.querySelector('.pagination-page-list');
+                const pageSize = sizeSel ? parseInt(sizeSel.value, 10) : 20;
+                return { total, pageSize: pageSize || 20, totalPages: Math.max(1, Math.ceil(total / (pageSize || 20))) };
+            });
+        };
+        let pager = await doQuery();
+        if (!pager.total) {
+            this.log(`${SITE_NAME}首次查询 0 条，重试一次...`);
+            pager = await doQuery();
         }
-        await new Promise(r => setTimeout(r, 3000));
-
-        // 读取记录总数与每页条数，计算总页数
-        const pager = await page.evaluate(() => {
-            const totalText = (document.querySelector('#table_data_count') || {}).textContent || '';
-            const m = totalText.match(/(\d+)/);
-            const total = m ? parseInt(m[1], 10) : 0;
-            const sizeSel = document.querySelector('.pagination-page-list');
-            const pageSize = sizeSel ? parseInt(sizeSel.value, 10) : 20;
-            return { total, pageSize: pageSize || 20, totalPages: Math.max(1, Math.ceil(total / (pageSize || 20))) };
-        });
         this.log(`${SITE_NAME}命中 ${pager.total} 条报警，共 ${pager.totalPages} 页`);
 
         // 逐页采集（第 1 页已加载；后续页点击“下一页”）

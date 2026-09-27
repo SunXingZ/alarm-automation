@@ -17,12 +17,20 @@ const LOGIN_TIMEOUT = 600000;
 
 // 调试开关：true = 跳过网站1采集，直接使用下面的模拟数据测试网站2导出流程（正式流程必须为 false）
 const USE_MOCK_COMPLAINTS = false;
+// 模拟数据：来自“新世纪”目录的 12 条实际表格（车牌 + 表格首末 GPS 时间）
 const MOCK_COMPLAINTS = [
-    { plate: '沪GB7688', startTime: '2026-09-14 12:13:24', endTime: '2026-09-14 17:37:24', orderNo: '22166819' },
-    { plate: '沪FB1527', startTime: '2026-09-14 16:16:00', endTime: '2026-09-15 00:33:49', orderNo: '22166748' },
-    { plate: '沪GQ6585', startTime: '2026-09-14 18:30:13', endTime: '2026-09-14 23:11:03', orderNo: '22166705' },
-    { plate: '沪GQ6585', startTime: '2026-09-14 00:56:27', endTime: '2026-09-14 06:03:09', orderNo: '22166732' },
-    { plate: '沪FB1527', startTime: '2026-09-14 07:05:30', endTime: '2026-09-14 15:47:26', orderNo: '22166700' }
+    { plate: '沪B09708', startTime: '2026-09-22 09:54:56', endTime: '2026-09-22 15:42:03', orderNo: 'XQ-001' },
+    { plate: '沪B09708', startTime: '2026-09-22 15:50:00', endTime: '2026-09-22 20:07:00', orderNo: 'XQ-002' },
+    { plate: '沪DR6366', startTime: '2026-09-22 08:20:00', endTime: '2026-09-22 17:17:00', orderNo: 'XQ-003' },
+    { plate: '沪EE2709', startTime: '2026-09-22 18:58:30', endTime: '2026-09-23 00:55:00', orderNo: 'XQ-004' },
+    { plate: '沪FA5785', startTime: '2026-09-22 12:14:30', endTime: '2026-09-22 16:53:11', orderNo: 'XQ-005' },
+    { plate: '沪FA5785', startTime: '2026-09-22 16:56:58', endTime: '2026-09-22 21:51:37', orderNo: 'XQ-006' },
+    { plate: '沪FB1527', startTime: '2026-09-22 07:25:30', endTime: '2026-09-22 15:30:27', orderNo: 'XQ-007' },
+    { plate: '沪FB1527', startTime: '2026-09-22 15:52:30', endTime: '2026-09-23 01:12:00', orderNo: 'XQ-008' },
+    { plate: '沪GB7688', startTime: '2026-09-22 12:03:00', endTime: '2026-09-22 17:40:30', orderNo: 'XQ-009' },
+    { plate: '沪GG8786', startTime: '2026-09-22 11:58:30', endTime: '2026-09-22 16:55:37', orderNo: 'XQ-010' },
+    { plate: '沪GL0630', startTime: '2026-09-22 05:03:43', endTime: '2026-09-22 11:08:52', orderNo: 'XQ-011' },
+    { plate: '沪GL0630', startTime: '2026-09-22 12:01:30', endTime: '2026-09-22 17:47:02', orderNo: 'XQ-012' }
 ];
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
