@@ -12,7 +12,7 @@ const path = require('path');
 const { app } = require('electron');
 
 async function runAutomation(options = {}, log = console.log) {
-    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, copySpreadsheet } = options;
+    const { outputDir = path.join(__dirname, '..', 'output'), plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, faceModel, copySpreadsheet } = options;
 
     // 道路运输车辆运营监测分析应用流程开关（暂时屏蔽，后续改回 true 即可恢复）
     const ENABLE_SERVICE_A = false;
@@ -71,7 +71,7 @@ async function runAutomation(options = {}, log = console.log) {
 
         // 运输车辆监控平台：查询并下载截图（登录由用户手动完成，登录后自动继续）
         const serviceB = new ServiceB(log);
-        const comparator = new FaceComparator({ distanceThreshold: faceThreshold });
+        const comparator = new FaceComparator({ distanceThreshold: faceThreshold, model: faceModel });
         // 临时目录必须放可写位置（打包后 __dirname 在只读 app.asar 内）。
         // 优先 userData；若被杀软/权限锁住（Windows EPERM 常见），依次降级 os.tmpdir() / 输出目录
         const pickWritableDir = (candidates) => {

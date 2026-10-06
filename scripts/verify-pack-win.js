@@ -42,6 +42,7 @@ requireHit('onnxruntime DLL', path.join(UNPACKED_NM, 'onnxruntime-node'), (n) =>
 requireHit('sharp win32 绑定', path.join(UNPACKED_NM, '@img'), (n) => /^sharp-win32-x64-.*\.node$/.test(n));
 
 // 3. 人脸模型通过 extraResources 复制到 resources/models（不进 asar）
+// adaface_ir101.onnx 为可选高精度模型：缺失仅告警不失败（用户选标准模型不受影响）
 const modelDir = path.join(RES, 'models', 'insightface');
 for (const m of ['det_10g.onnx', 'w600k_r50.onnx']) {
     const p = path.join(modelDir, m);
@@ -51,6 +52,12 @@ for (const m of ['det_10g.onnx', 'w600k_r50.onnx']) {
         console.log(`MISSING: ${p}`);
         fail = true;
     }
+}
+const adaface = path.join(modelDir, 'adaface_ir101.onnx');
+if (fs.existsSync(adaface) && fs.statSync(adaface).size > 100 * 1024 * 1024) {
+    console.log(`OK: ${adaface} (${(fs.statSync(adaface).size / 1024 / 1024).toFixed(1)}MB)`);
+} else {
+    console.log(`WARN: ${adaface} 缺失（高精度模型选项不可用，标准模型不受影响）`);
 }
 
 // 4. VC++ 运行库安装器（extraResources 随包，NSIS 安装时静默执行，防错误 1114）

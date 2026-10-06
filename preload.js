@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getFilePath: (file) => webUtils.getPathForFile(file),
     // 读取表格首末行 GPS 时间（用于自动填充查询条件）
     getSpreadsheetRange: (filePath) => ipcRenderer.invoke('get-spreadsheet-range', filePath),
+    // 各识别模型默认阈值（切换模型时 UI 复位阈值滑块）
+    getFaceModelDefaults: () => ipcRenderer.invoke('face-model-defaults'),
     // ===== 导出申诉表格 =====
     exportComplaintTables: (limit) => ipcRenderer.invoke('export-complaint-tables', { limit: limit || 0 }),
     onExportLogMessage: (callback) => ipcRenderer.on('export-log-message', (event, message) => callback(message)),

@@ -155,7 +155,8 @@ body {
 .field input[type="text"],
 .field input[type="password"],
 .field input[type="date"],
-.field input[type="number"] {
+.field input[type="number"],
+.field select {
     width: 100%;
     padding: 10px 14px;
     font-size: 14px;
@@ -163,6 +164,23 @@ body {
     border-radius: 10px;
     background: #f8fafc;
     transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.field select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    color: #333;
+    cursor: pointer;
+}
+
+.field select:focus {
+    outline: none;
+    border-color: #4a90d9;
+    background-color: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.15);
 }
 
 .field input:focus {

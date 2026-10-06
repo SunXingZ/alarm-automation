@@ -60,6 +60,15 @@ ipcMain.handle('get-spreadsheet-range', async (event, filePath) => {
     }
 });
 
+// 各识别模型配置（文件名 + 默认阈值），渲染进程切换模型时复位阈值滑块
+ipcMain.handle('face-model-defaults', async () => {
+    const { MODEL_CONFIGS } = require('./automation/face-comparator');
+    return Object.fromEntries(Object.entries(MODEL_CONFIGS).map(([key, cfg]) => [
+        key,
+        { defaultThreshold: cfg.defaultThreshold }
+    ]));
+});
+
 // 监听来自渲染进程的“开始”请求
 ipcMain.handle('start-automation', async (event, payload) => {
     // 将日志发送到渲染进程
@@ -72,8 +81,8 @@ ipcMain.handle('start-automation', async (event, payload) => {
     // 输出目录可以动态设置，例如使用 app.getPath('documents')
     const outputDir = path.join(app.getPath('documents'), 'AlarmAutomationOutput');
 
-    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, openDirOnFinish, copySpreadsheet } = payload;
-    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, copySpreadsheet }, log);
+    const { plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, faceModel, openDirOnFinish, copySpreadsheet } = payload;
+    const result = await runAutomation({ outputDir, plate, startDate, endDate, alarmTypes, riskLevels, repairStatus, spreadsheetPath, faceThreshold, faceModel, copySpreadsheet }, log);
     // 任务完成后自动打开保存目录（优先打开实际保存人脸的“车牌_日期”子目录）；
     // 一键处理批量模式由渲染进程传 openDirOnFinish=false，全部完成后统一打开
     if (openDirOnFinish !== false && result.success && result.outputDir) {

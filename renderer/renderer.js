@@ -147,6 +147,20 @@ thresholdSlider.addEventListener('input', () => {
     thresholdValue.textContent = clampThreshold(thresholdSlider.value).toFixed(2);
 });
 
+// 识别模型选择：切换时把阈值滑块复位为该模型的推荐默认值（默认值来自主进程 face-comparator 配置）
+const modelSelect = document.getElementById('face-model');
+let modelDefaults = { r50: { defaultThreshold: 1.00 }, adaface: { defaultThreshold: 0.95 } };
+window.electronAPI.getFaceModelDefaults().then((defaults) => {
+    if (defaults && Object.keys(defaults).length) modelDefaults = defaults;
+}).catch(() => {});
+modelSelect.addEventListener('change', () => {
+    const cfg = modelDefaults[modelSelect.value];
+    if (cfg && Number.isFinite(cfg.defaultThreshold)) {
+        thresholdSlider.value = clampThreshold(cfg.defaultThreshold);
+        thresholdValue.textContent = clampThreshold(cfg.defaultThreshold).toFixed(2);
+    }
+});
+
 // 本地表格文件：解析文件名中的车牌号与日期并自动填入查询条件
 const localFileInput = document.getElementById('local-file');
 const filePickBtn = document.getElementById('file-pick-btn');
@@ -230,6 +244,7 @@ async function startProcess(opts = {}) {
         repairStatus: readChecks('repair-status-filters', (v) => v),
         spreadsheetPath: spreadsheetPath || '',
         faceThreshold: clampThreshold(thresholdSlider.value),
+        faceModel: modelSelect.value,
         openDirOnFinish: opts.openDirOnFinish !== false,
         copySpreadsheet: spreadsheetFromExport // 自动导入的表格在成功后归档到结果目录
     };
