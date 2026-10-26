@@ -7,12 +7,13 @@ const fs = require('fs-extra');
 // 部分电脑缺少或版本过旧的 VC++ 运行库时，require 会抛
 // "A dynamic link library (DLL) initialization routine failed"（错误 1114）并直接崩溃；
 // 这里改为弹出可操作的提示后退出，而不是无说明地闪退
-let runAutomation, BrowserManager, getSpreadsheetTimeRange, ExportFlow;
+let runAutomation, BrowserManager, getSpreadsheetTimeRange, ExportFlow, readMonitorReport, MonitorReportFlow;
 try {
     ({ runAutomation } = require('./automation/index'));
     BrowserManager = require('./automation/browser-manager');
     ExportFlow = require('./automation/export-flow');
     ({ getSpreadsheetTimeRange } = require('./automation/stop-finder'));
+    ({ readMonitorReport, MonitorReportFlow } = require('./automation/monitor-report'));
 } catch (e) {
     dialog.showErrorBox(
         '程序初始化失败',
@@ -138,7 +139,61 @@ ipcMain.handle('save-exported-file', async (event, { srcPath, suggestedName }) =
     }
 });
 
-// 打开指定目录（一键处理完成后打开输出根目录；传空则打开默认输出目录）
+// 处理监控报表：解析报表车辆列表（渲染进程预览用）
+ipcMain.handle('parse-monitor-report', async (event, filePath) => {
+    try {
+        const parsed = readMonitorReport(filePath);
+        return {
+            success: true,
+            sheetName: parsed.sheetName,
+            columns: parsed.columns,
+            rows: parsed.rows
+        };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+// 处理监控报表：逐车视频点播并回填黑屏勾选，结果另存为副本
+ipcMain.handle('process-monitor-report', async (event, payload) => {
+    const log = (message) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('monitor-log-message', message);
+        }
+    };
+    const onProgress = (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('monitor-progress', progress);
+        }
+    };
+    const flow = new MonitorReportFlow({ log, onProgress });
+    try {
+        const result = await flow.run(payload && payload.filePath);
+        // 处理完成后自动打开结果所在目录（Windows 下可能是临时目录，避免用户找不到文件）
+        if (result && result.success) {
+            const dir = result.outputDir || (result.outputPath ? path.dirname(result.outputPath) : '');
+            if (dir) {
+                try {
+                    fs.ensureDirSync(dir);
+                    const err = await openDirInOS(dir);
+                    if (err) log(`自动打开输出目录失败: ${err}`);
+                    else log(`已打开输出目录: ${dir}`);
+                    if (/[\\/](Temp|tmp)[\\/]/i.test(dir)) {
+                        log('提示：原文件位于临时目录，建议把“_已处理”文件另存到常用目录');
+                    }
+                } catch (e) {
+                    log(`自动打开输出目录出错: ${e.message}`);
+                }
+            }
+        }
+        return result;
+    } catch (e) {
+        log(`处理失败：${e.message}`);
+        return { success: false, error: e.message };
+    }
+});
+
+// 打开输出目录（一键处理完成后打开输出根目录；传空则打开默认输出目录）
 ipcMain.handle('open-output-dir', async (event, dir) => {
     const target = dir || path.join(app.getPath('documents'), 'AlarmAutomationOutput');
     if (!fs.existsSync(target)) return '目录不存在';

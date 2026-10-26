@@ -508,3 +508,163 @@ processAllBtn.addEventListener('click', async () => {
     exportBtn.disabled = false;
     processAllBtn.querySelector('.btn-text').textContent = '一键处理申诉表格';
 });
+
+// ==================== 处理监控报表（选项卡3） ====================
+const monitorFileInput = document.getElementById('monitor-file');
+const monitorFilePickBtn = document.getElementById('monitor-file-pick');
+const monitorFileNameEl = document.getElementById('monitor-file-name');
+const monitorResultBody = document.getElementById('monitor-result-body');
+const monitorSummary = document.getElementById('monitor-summary');
+const monitorStartBtn = document.getElementById('monitor-start-btn');
+const monitorLogOutput = document.getElementById('monitor-log-output');
+const monitorLogStatus = document.getElementById('monitor-log-status');
+
+const MONITOR_STATUS_TEXT = {
+    waiting: '待处理',
+    processing: '处理中',
+    done: '完成',
+    offline: '车辆离线',
+    notfound: '未找到车辆',
+    failed: '失败'
+};
+
+let monitorFilePath = '';
+let monitorRows = [];              // { rowIndex, plate, line, status, detail, blackChannels }
+let monitorRowMap = new Map();     // rowIndex -> tr
+let monitorRunning = false;
+
+const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const setMonitorStatus = (text, cls) => {
+    monitorLogStatus.textContent = text;
+    monitorLogStatus.className = 'log-status ' + (cls || '');
+};
+
+function monitorDetailText(row) {
+    if (row.status === 'done') {
+        return row.blackChannels && row.blackChannels.length ? row.blackChannels.join('、') : '全部有画面';
+    }
+    if (row.status === 'failed') return row.detail || '失败';
+    if (row.status === 'offline' || row.status === 'notfound') return row.detail || '-';
+    return row.status === 'processing' ? '处理中' : '-';
+}
+
+function monitorRowHtml(row) {
+    return `<td>${esc(row.line || '-')}</td>
+        <td>${esc(row.plate)}</td>
+        <td><span class="status-tag status-${row.status === 'done' ? 'exported' : row.status}">${MONITOR_STATUS_TEXT[row.status] || '待处理'}</span></td>
+        <td>${esc(monitorDetailText(row))}</td>`;
+}
+
+function updateMonitorRow(row) {
+    const tr = monitorRowMap.get(row.rowIndex);
+    if (tr) tr.innerHTML = monitorRowHtml(row);
+}
+
+function updateMonitorSummary() {
+    if (!monitorRows.length) {
+        monitorSummary.textContent = '';
+        return;
+    }
+    const done = monitorRows.filter(r => r.status === 'done').length;
+    const offline = monitorRows.filter(r => r.status === 'offline' || r.status === 'notfound').length;
+    const fail = monitorRows.filter(r => r.status === 'failed').length;
+    const black = monitorRows.filter(r => r.status === 'done' && r.blackChannels && r.blackChannels.length).length;
+    let text = `共 ${monitorRows.length} 行 · 完成 ${done}`;
+    if (black) text += ` · 黑屏 ${black}`;
+    if (offline) text += ` · 离线/未找到 ${offline}`;
+    if (fail) text += ` · 失败 ${fail}`;
+    monitorSummary.textContent = text;
+}
+
+function renderMonitorRows() {
+    monitorResultBody.innerHTML = '';
+    monitorRowMap.clear();
+    if (!monitorRows.length) {
+        const tr = document.createElement('tr');
+        tr.className = 'empty-row';
+        tr.innerHTML = '<td colspan="4">请选择监控报表文件</td>';
+        monitorResultBody.appendChild(tr);
+        return;
+    }
+    for (const row of monitorRows) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = monitorRowHtml(row);
+        monitorRowMap.set(row.rowIndex, tr);
+        monitorResultBody.appendChild(tr);
+    }
+}
+
+window.electronAPI.onMonitorLogMessage((message) => appendLog(monitorLogOutput, message));
+window.electronAPI.onMonitorProgress((p) => {
+    if (!p || !Array.isArray(p.rowIndexes)) return;
+    for (const rowIndex of p.rowIndexes) {
+        const row = monitorRows.find(r => r.rowIndex === rowIndex);
+        if (!row) continue;
+        row.status = p.status || row.status;
+        row.detail = p.detail || '';
+        row.blackChannels = p.blackChannels || [];
+        updateMonitorRow(row);
+    }
+    updateMonitorSummary();
+});
+
+monitorFilePickBtn.addEventListener('click', () => monitorFileInput.click());
+
+monitorFileInput.addEventListener('change', async () => {
+    const f = monitorFileInput.files && monitorFileInput.files[0];
+    if (!f) return;
+    monitorFileNameEl.textContent = f.name;
+    monitorFilePath = window.electronAPI.getFilePath(f) || '';
+    monitorRows = [];
+    renderMonitorRows();
+    monitorSummary.textContent = '';
+    monitorStartBtn.disabled = true;
+    setMonitorStatus('读取中', 'running');
+
+    const res = await window.electronAPI.parseMonitorReport(monitorFilePath);
+    if (!res || !res.success) {
+        setMonitorStatus('读取失败', 'error');
+        appendLog(monitorLogOutput, `读取报表失败：${(res && res.error) || '未知错误'}`);
+        return;
+    }
+
+    monitorRows = res.rows.map(r => ({ ...r, status: 'waiting', detail: '', blackChannels: [] }));
+    renderMonitorRows();
+    updateMonitorSummary();
+    setMonitorStatus('已导入', 'done');
+    monitorStartBtn.disabled = monitorRows.length === 0;
+    if (!monitorRows.length) {
+        appendLog(monitorLogOutput, '报表中没有车辆数据（车辆牌号列为空）');
+    }
+});
+
+monitorStartBtn.addEventListener('click', async () => {
+    if (monitorRunning || !monitorFilePath || !monitorRows.length) return;
+
+    monitorRunning = true;
+    monitorStartBtn.disabled = true;
+    monitorStartBtn.querySelector('.btn-text').textContent = '处理中...';
+    monitorLogOutput.innerHTML = '';
+    setMonitorStatus('运行中', 'running');
+    monitorRows.forEach(r => { r.status = 'waiting'; r.detail = ''; r.blackChannels = []; });
+    renderMonitorRows();
+    updateMonitorSummary();
+
+    const result = await window.electronAPI.processMonitorReport(monitorFilePath);
+
+    if (result && result.success) {
+        setMonitorStatus('完成', 'done');
+        appendLog(monitorLogOutput, `结果已保存：${result.outputPath}`);
+        alert(`处理完成！\n结果已保存到：${result.outputPath}`);
+    } else {
+        setMonitorStatus('失败', 'error');
+        alert(`处理失败：${(result && result.error) || '未知错误'}`);
+    }
+
+    monitorRunning = false;
+    monitorStartBtn.disabled = false;
+    monitorStartBtn.querySelector('.btn-text').textContent = '开始处理监控报表';
+});

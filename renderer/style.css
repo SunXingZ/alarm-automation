@@ -496,7 +496,8 @@ input[type="range"]::-moz-range-thumb {
     color: #d9534f;
 }
 
-#log-output {
+#log-output,
+#monitor-log-output {
     background: #1e2530;
     color: #c8d3e0;
     padding: 10px 12px;
@@ -510,11 +511,13 @@ input[type="range"]::-moz-range-thumb {
     word-break: break-all;
 }
 
-#log-output::-webkit-scrollbar {
+#log-output::-webkit-scrollbar,
+#monitor-log-output::-webkit-scrollbar {
     width: 8px;
 }
 
-#log-output::-webkit-scrollbar-thumb {
+#log-output::-webkit-scrollbar-thumb,
+#monitor-log-output::-webkit-scrollbar-thumb {
     background: #3a4657;
     border-radius: 4px;
 }
@@ -717,6 +720,23 @@ body {
 }
 
 /* 隐藏原生 file input 的视觉空间 */
-#local-file {
+#local-file,
+#monitor-file {
     display: none;
+}
+
+/* 监控报表状态：待处理 / 离线 / 未找到 */
+.status-waiting {
+    background: #eef1f5;
+    color: #8892a0;
+}
+
+.status-offline {
+    background: #fff6e6;
+    color: #d98a2b;
+}
+
+.status-notfound {
+    background: #fdecec;
+    color: #d9534f;
 }

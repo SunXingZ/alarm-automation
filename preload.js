@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onExportProgress: (callback) => ipcRenderer.on('export-progress', (event, progress) => callback(progress)),
     // 将导出的表格另存到用户指定位置
     saveExportedFile: (srcPath, suggestedName) => ipcRenderer.invoke('save-exported-file', { srcPath, suggestedName }),
+    // ===== 处理监控报表 =====
+    parseMonitorReport: (filePath) => ipcRenderer.invoke('parse-monitor-report', filePath),
+    processMonitorReport: (filePath) => ipcRenderer.invoke('process-monitor-report', { filePath }),
+    onMonitorLogMessage: (callback) => ipcRenderer.on('monitor-log-message', (event, message) => callback(message)),
+    onMonitorProgress: (callback) => ipcRenderer.on('monitor-progress', (event, progress) => callback(progress)),
     // 打开输出目录
     openOutputDir: (dir) => ipcRenderer.invoke('open-output-dir', dir)
 });

@@ -11,6 +11,7 @@
     <nav class="tab-bar">
         <button type="button" class="tab-btn active" data-tab="tab-export">导出申诉表格</button>
         <button type="button" class="tab-btn" data-tab="tab-process">处理申诉表格</button>
+        <button type="button" class="tab-btn" data-tab="tab-monitor">处理监控报表</button>
     </nav>
 
     <!-- ==================== 选项卡1：导出申诉表格 ==================== -->
@@ -187,6 +188,71 @@
                 <span class="log-status" id="log-status">空闲</span>
             </div>
             <div id="log-output"></div>
+        </section>
+
+        <footer class="page-footer">报警申诉自动化工具 · 请妥善保管账号信息</footer>
+    </main>
+
+    <!-- ==================== 选项卡3：处理监控报表 ==================== -->
+    <main id="tab-monitor" class="page tab-page">
+        <header class="page-header">
+            <div class="header-icon">📹</div>
+            <div>
+                <h1>处理监控报表</h1>
+                <p class="subtitle">导入 GPS 监控日报表，逐车进入平台视频点播，自动判断各通道是否黑屏无画面并在对应列打勾</p>
+            </div>
+        </header>
+
+        <section class="form-container">
+            <div class="card">
+                <div class="card-header">
+                    <h2>导入监控报表</h2>
+                </div>
+                <div class="field">
+                    <label for="monitor-file">报表文件</label>
+                    <div class="file-picker">
+                        <input type="file" id="monitor-file" accept=".xlsx,.xls,.xlsm" hidden>
+                        <button type="button" id="monitor-file-pick" class="secondary-btn">选择文件…</button>
+                        <span id="monitor-file-name" class="file-name">未选择</span>
+                    </div>
+                    <small class="filter-tip">表头需包含：车辆牌号、前方位、驾驶座、前车厢、上客门。黑屏无画面的通道会在对应列打勾（√），结果另存为“原文件名_已处理”。</small>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>报表车辆</h2>
+                    <span id="monitor-summary" class="log-status"></span>
+                </div>
+                <div class="export-results">
+                    <table class="result-table">
+                        <thead>
+                            <tr>
+                                <th>线路</th>
+                                <th>车牌号</th>
+                                <th>状态</th>
+                                <th>黑屏通道</th>
+                            </tr>
+                        </thead>
+                        <tbody id="monitor-result-body">
+                            <tr class="empty-row"><td colspan="4">请选择监控报表文件</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <button id="monitor-start-btn" class="primary-btn" disabled>
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">开始处理监控报表</span>
+            </button>
+        </section>
+
+        <section id="monitor-log-container" class="log-container">
+            <div class="log-header">
+                <h3>运行日志</h3>
+                <span class="log-status" id="monitor-log-status">空闲</span>
+            </div>
+            <div id="monitor-log-output"></div>
         </section>
 
         <footer class="page-footer">报警申诉自动化工具 · 请妥善保管账号信息</footer>
