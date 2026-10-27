@@ -20,3 +20,4 @@ models/insightface/*.zip
 
 # VC++ 运行库安装器（构建时由 CI 下载，随安装包发布）
 vendor/
+_sim6585/

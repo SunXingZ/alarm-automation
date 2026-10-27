@@ -2,11 +2,10 @@ const BrowserManager = require('./browser-manager');
 const ServiceA = require('./service-a');
 const ServiceB = require('./service-b');
 const FaceComparator = require('./face-comparator');
-const { isDriverScreenshot } = require('./driver-face-filter');
 const { downloadImage, compressToJpg } = require('./image-saver');
 const { readSpreadsheet, findStopsInWindow, pickClosestStop, findSpeedAtTime, stopAddressKeyword } = require('./stop-finder');
 const { composeFaceStopImage } = require('./image-composer');
-const { readWatermarkTime, readWatermarkSpeed, closeWorker } = require('./watermark-ocr');
+const { readWatermarkInfo, closeWorker } = require('./watermark-ocr');
 const fs = require('fs-extra');
 const path = require('path');
 const { app } = require('electron');
@@ -126,36 +125,30 @@ async function runAutomation(options = {}, log = console.log) {
             log(`车牌 ${order.plate} 成功下载 ${localPaths.length} 张截图`);
             if (localPaths.length === 0) continue;
 
-            // 只保留司机人脸截图（四角均有水印文字），过滤非司机照片
-            const driverPaths = []; // [{ path, time }]
+            // 一次性读取每张截图的水印信息（GPS 时间 / 速度），并按水印内容过滤无关插图。
+            // 内容驱动：不再依赖“四角各有哪种水印”的固定版式（平台水印位置会变，
+            // 如经纬度移到顶部第二行、速度为 "0 KM/H" 或 "G：71km/h"）；只要识别到 GPS 相关信息即保留，
+            // 是否有人脸交给后续人脸检测判断
+            const driverPaths = []; // [{ path, time, wmInfo }]
             for (const item of localPaths) {
+                let info = { time: null, speed: null, hasGpsWatermark: false };
                 try {
-                    if (await isDriverScreenshot(item.path)) {
-                        driverPaths.push(item);
-                    } else {
-                        try { fs.removeSync(item.path); } catch (e) { /* 删除失败不阻塞流程 */ } // 删除非司机截图，减少后续比对量
-                    }
+                    info = await readWatermarkInfo(item.path);
                 } catch (err) {
-                    log(`司机截图判定失败: ${item.path} - ${err.message}`);
+                    log(`水印识别异常: ${path.basename(item.path)} - ${err.message}`);
+                    info.hasGpsWatermark = true; // 识别异常时不误杀，交由后续人脸检测判断
                 }
+                if (!info.hasGpsWatermark) {
+                    try { fs.removeSync(item.path); } catch (e) { /* 删除失败不阻塞流程 */ } // 删除无水印插图，减少后续比对量
+                    continue;
+                }
+                item.wmInfo = info;
+                // 水印时间与 GPS 轨迹表同源，是匹配停靠段的正确依据（报警行时间可能只是报警登记时间）
+                if (info.time) item.time = info.time;
+                driverPaths.push(item);
             }
-            log(`车牌 ${order.plate} 司机截图 ${driverPaths.length}/${localPaths.length} 张`);
+            log(`车牌 ${order.plate} 抓拍截图 ${driverPaths.length}/${localPaths.length} 张`);
             if (driverPaths.length === 0) continue;
-
-            // 用截图水印上的"抓拍时间"覆盖报警行解析的时间：两者可能不一致，
-            // 水印时间与 GPS 轨迹表同源，是匹配停靠段的正确依据（否则停靠段会落在人脸时间范围外）
-            for (const item of driverPaths) {
-                try {
-                    const wmTime = await readWatermarkTime(item.path);
-                    if (wmTime) {
-                        item.time = wmTime;
-                    } else {
-                        log(`水印时间识别失败，保留报警行时间: ${item.time}`);
-                    }
-                } catch (err) {
-                    log(`水印时间识别异常: ${item.path} - ${err.message}`);
-                }
-            }
 
             // 提前解析表格（供速度过滤交叉验证与后续停靠段匹配共用）
             let parsed = null;
@@ -170,9 +163,9 @@ async function runAutomation(options = {}, log = console.log) {
                 log(`解析表格失败: ${parsed.error}`);
             }
 
-            // 右下角速度水印为 0（车静止，司机可能在摄像头外）则丢弃该截图。
-            // 优先用表格交叉验证（水印时间与 GPS 轨迹同源，秒级精确，比小字 OCR 可靠）；
-            // 表格匹配不到时才回退 OCR 右下角速度水印
+            // 速度为 0（车静止，司机可能在摄像头外）则丢弃该截图。
+            // 优先用表格交叉验证（水印时间与 GPS 轨迹表同源，秒级精确，比小字 OCR 可靠）；
+            // 表格匹配不到时才用截图水印 OCR 识别出的速度
             const speedRows = parsed && !parsed.error ? parsed.rows : null;
             const validDriverPaths = [];
             for (const item of driverPaths) {
@@ -180,13 +173,7 @@ async function runAutomation(options = {}, log = console.log) {
                 if (speedRows) {
                     speed = findSpeedAtTime(speedRows, item.time, 60);
                 }
-                if (speed === null) {
-                    try {
-                        speed = await readWatermarkSpeed(item.path);
-                    } catch (err) {
-                        log(`速度水印识别异常，保留: ${path.basename(item.path)} - ${err.message}`);
-                    }
-                }
+                if (speed === null && item.wmInfo) speed = item.wmInfo.speed;
                 if (speed !== null && speed < 0.5) {
                     log(`速度为 0 丢弃: ${path.basename(item.path)}`);
                     try { fs.removeSync(item.path); } catch (e) { /* 文件被占用时不阻塞流程 */ }

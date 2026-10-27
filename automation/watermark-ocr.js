@@ -47,11 +47,12 @@ async function getWorker() {
     if (worker) return worker;
     if (!workerReady) {
         workerReady = (async () => {
-            // 数字 + 时间/速度分隔符白名单（km/h 的字母也放行，供速度水印识别）
+            // 数字 + 时间/速度分隔符白名单；km/h 的字母、经纬度 E/N、通道号 CH 一并放行，
+            // 供内容驱动的整条水印带识别（不同版式下水印内容不变，位置会变）
             const w = await createWorker('eng', 1, {
                 langPath: findLangDir(),
                 corePath: findCoreDir(),
-                tessedit_char_whitelist: '0123456789-: .kmhKMG',
+                tessedit_char_whitelist: '0123456789-: .kmhKMGENCH',
                 tessedit_pageseg_mode: '7'
             });
             return w;
@@ -85,44 +86,7 @@ function parseTime(text) {
     return out;
 }
 
-// 识别单张截图左上角水印时间；成功返回 "YYYY-MM-DD HH:MM:SS"，否则返回 null
-async function readWatermarkTime(imagePath) {
-    const w = await getWorker();
-    const meta = await sharp(imagePath).metadata();
-    if (!meta.width || !meta.height) return null;
-    // 时间水印位于左上角：约占顶部 8%、左侧 55% 区域
-    const cropW = Math.round(meta.width * 0.55);
-    const cropH = Math.round(meta.height * 0.08);
-
-    // 变体2（优先）：极性自适应二值化。深字浅底自动反相，再阈值化，提升低对比/浅色背景下的识别率
-    const gray = await sharp(imagePath)
-        .extract({ left: 0, top: 0, width: cropW, height: cropH })
-        .grayscale().raw().toBuffer({ resolveWithObject: true });
-    const gd = gray.data, gw = gray.info.width, gh = gray.info.height;
-    let gsum = 0;
-    for (let i = 0; i < gd.length; i++) gsum += gd[i];
-    const invert = (gsum / gd.length) > 128;
-    const bin = Buffer.alloc(gw * gh);
-    for (let i = 0; i < gd.length; i++) {
-        const v = invert ? 255 - gd[i] : gd[i];
-        bin[i] = v > 128 ? 255 : 0;
-    }
-    const bufBin = await sharp(bin, { raw: { width: gw, height: gh, channels: 1 } })
-        .resize({ width: gw * 2, height: gh * 2, kernel: 'lanczos3' })
-        .png().toBuffer();
-    const tBin = parseTime((await w.recognize(bufBin)).data.text);
-    if (tBin) return tBin;
-
-    // 变体1（兜底）：灰度+归一化，放大 2 倍
-    const bufGray = await sharp(imagePath)
-        .extract({ left: 0, top: 0, width: cropW, height: cropH })
-        .resize({ width: cropW * 2, height: cropH * 2, kernel: 'lanczos3' })
-        .grayscale().normalize().toBuffer();
-    const tGray = parseTime((await w.recognize(bufGray)).data.text);
-    return tGray;
-}
-
-// 将灰度 buffer 做“极性自适应二值化”（深字浅底自动反相再阈值化），返回 PNG buffer
+// 将灰度 buffer 做“极性自适应二值化”（深字浅底自动反相再阈值化），返回 sharp 实例
 function binarizeBuffer(gray) {
     const gd = gray.data, gw = gray.info.width, gh = gray.info.height;
     let gsum = 0;
@@ -136,38 +100,69 @@ function binarizeBuffer(gray) {
     return sharp(bin, { raw: { width: gw, height: gh, channels: 1 } });
 }
 
-// 识别右下角速度水印（格式如 "G：71km/h"），返回数字（0 表示静止）；识别失败返回 null
-async function readWatermarkSpeed(imagePath) {
-    try {
-        const w = await getWorker();
-        const meta = await sharp(imagePath).metadata();
-        if (!meta.width || !meta.height) return null;
-        // 速度水印位于右下角：右侧 25% 宽、底部 12% 高
-        const left = Math.round(meta.width * 0.75);
-        const top = Math.round(meta.height * 0.88);
-        const cropW = meta.width - left;
-        const cropH = meta.height - top;
-        if (cropW <= 0 || cropH <= 0) return null;
-
-        // 变体2（优先）：极性自适应二值化，显著提升浅底/低对比下对 0 的识别
-        const gray = await sharp(imagePath)
-            .extract({ left, top, width: cropW, height: cropH })
-            .grayscale().raw().toBuffer({ resolveWithObject: true });
-        const bufBin = await binarizeBuffer(gray)
-            .resize({ width: cropW * 3, height: cropH * 3, kernel: 'lanczos3' })
+// OCR 指定区域，返回识别文本。
+// variant='bin'：极性自适应二值化（优先，浅底/低对比更稳）；'gray'：灰度归一化（兜底）
+async function ocrRegionOnce(imagePath, region, scale, variant) {
+    const { left, top, width, height } = region;
+    if (width <= 0 || height <= 0) return '';
+    const w = await getWorker();
+    const base = sharp(imagePath).extract({ left, top, width, height }).grayscale();
+    let buf;
+    if (variant === 'bin') {
+        const gray = await base.raw().toBuffer({ resolveWithObject: true });
+        buf = await binarizeBuffer(gray)
+            .resize({ width: width * scale, height: height * scale, kernel: 'lanczos3' })
             .png().toBuffer();
-        const sBin = parseSpeed((await w.recognize(bufBin)).data.text);
-        if (sBin !== null) return sBin;
-
-        // 变体1（兜底）：灰度+归一化
-        const bufGray = await sharp(imagePath)
-            .extract({ left, top, width: cropW, height: cropH })
-            .resize({ width: cropW * 3, height: cropH * 3, kernel: 'lanczos3' })
-            .grayscale().normalize().toBuffer();
-        return parseSpeed((await w.recognize(bufGray)).data.text);
-    } catch (e) {
-        return null; // 识别失败不强制丢弃
+    } else {
+        buf = await base
+            .resize({ width: width * scale, height: height * scale, kernel: 'lanczos3' })
+            .normalize().png().toBuffer();
     }
+    return (await w.recognize(buf)).data.text || '';
+}
+
+// 读取一张截图上的全部水印信息（内容驱动：按水印“内容”解析，不依赖信息在哪个角）。
+// 平台水印版式会变（如经纬度从左侧第二行移到顶部、速度为 "0 KM/H" 或 "G：71km/h"），
+// 因此按“整条水印带”取文本再按内容解析：
+//   顶部带：通道号 / GPS 时间 / 车牌 / 经纬度
+//   底部带：速度（字很小，必须裁剪放大；整条带会被画面内容干扰，故只取右下小区域）
+// 返回 { time: "YYYY-MM-DD HH:MM:SS"|null, speed: number|null, hasGpsWatermark: boolean }
+async function readWatermarkInfo(imagePath) {
+    const info = { time: null, speed: null, hasGpsWatermark: false };
+    const meta = await sharp(imagePath).metadata();
+    if (!meta.width || !meta.height) return info;
+    const W = meta.width, H = meta.height;
+
+    // 顶部整条带（全宽）：时间、车牌、经纬度都在这里，不限定左右
+    const topRegion = { left: 0, top: 0, width: W, height: Math.round(H * 0.22) };
+    let topText = await ocrRegionOnce(imagePath, topRegion, 2, 'bin');
+    info.time = parseTime(topText);
+    if (!info.time) {
+        const t2 = await ocrRegionOnce(imagePath, topRegion, 2, 'gray');
+        info.time = parseTime(t2);
+        topText += '\n' + t2;
+    }
+
+    // 速度：右下小区域（字迹极小，全宽带会被车身/座垫纹理干扰误读成 228/18 之类）
+    const spot = { left: Math.round(W * 0.70), top: Math.round(H * 0.86), width: W - Math.round(W * 0.70), height: H - Math.round(H * 0.86) };
+    let spotText = await ocrRegionOnce(imagePath, spot, 3, 'bin');
+    info.speed = parseSpeed(spotText);
+    if (info.speed === null) {
+        const t2 = await ocrRegionOnce(imagePath, spot, 3, 'gray');
+        spotText += '\n' + t2;
+        info.speed = parseSpeed(t2);
+    }
+
+    // 抓拍图判定：识别到时间、速度或经纬度之任一，即认为带 GPS 水印的抓拍截图。
+    // 是否有人脸交给后续人脸检测判断（无人脸自然会被丢弃），这里只过滤完全无水印的插图。
+    let all = topText + '\n' + spotText;
+    // 顶带完全没读出内容时，再取底部整条带兜底判定（避免误杀）
+    if (!info.time && info.speed === null && !/[EN]\s*\d{1,3}/.test(all)) {
+        const botTop = Math.round(H * 0.86);
+        all += '\n' + await ocrRegionOnce(imagePath, { left: 0, top: botTop, width: W, height: H - botTop }, 2, 'bin');
+    }
+    info.hasGpsWatermark = !!info.time || info.speed !== null || /[EN]\s*\d{1,3}/.test(all);
+    return info;
 }
 
 // 从识别文本中提取速度数值；取 "km/h" 前面的数字（前面的 G 等字符不固定，只看数字+km/h）
@@ -192,4 +187,4 @@ function parseSpeed(text) {
     return null;
 }
 
-module.exports = { readWatermarkTime, readWatermarkSpeed, closeWorker };
+module.exports = { readWatermarkInfo, closeWorker };
