@@ -93,6 +93,55 @@ function markBlackChannels(wb, parsed, rowIndexes, blackChannels) {
     ws['!ref'] = XLSX.utils.encode_range(range);
 }
 
+// 将车辆信息回填到报表：
+// 速度 -> 【速度】列（只填数字）；状态 -> 【车辆状态】列（在线行驶=营，否则=停）；
+// 通讯时间 -> 【监控时段】列（时:分）；位置 -> 【车辆地理位置】列（列名容错，没有则忽略）
+function fillVehicleInfo(wb, parsed, rowIndexes, info) {
+    const ws = wb.Sheets[parsed.sheetName];
+    if (!ws || !info) return [];
+    // 列名容错查找：先精确匹配，再按关键字模糊匹配（如“车辆地里位置”/“车辆位置”）
+    const findCol = (exact, subs) => {
+        for (const n of exact) {
+            if (parsed.columns[n] !== undefined) return parsed.columns[n];
+        }
+        for (const key of Object.keys(parsed.columns)) {
+            if (subs.some(s => key.includes(s))) return parsed.columns[key];
+        }
+        return undefined;
+    };
+    const cols = {
+        speed: findCol(['速度'], ['速度', '车速']),
+        status: findCol(['车辆状态'], ['状态']),
+        time: findCol(['监控时段'], ['时段']),
+        position: findCol(['车辆地理位置', '车辆地里位置', '车辆位置', '地理位置', '地里位置'], ['位置'])
+    };
+
+    // 营/停规则：离线为停；在线且行驶（状态含“行驶”或速度>0）为营，其余（在线停车/熄火等）为停
+    const statusText = String(info.status || '');
+    const speedNum = parseFloat(info.speed || '0') || 0;
+    const ying = !/离线/.test(statusText) &&
+        (/行驶/.test(statusText) || (/在线/.test(statusText) && speedNum > 0));
+    const statusValue = ying ? '营' : '停';
+
+    const pending = [
+        { name: '速度', c: cols.speed, v: info.speed ? String(parseFloat(info.speed)) : '' },
+        { name: '车辆状态', c: cols.status, v: statusText ? statusValue : '' },
+        { name: '监控时段', c: cols.time, v: info.commTime || '' },
+        { name: '车辆地理位置', c: cols.position, v: String(info.position || '').slice(0, 120) }
+    ];
+    const filled = [];
+    for (const item of pending) {
+        if (item.c === undefined || !item.v) continue;
+        for (const r of rowIndexes) {
+            const addr = XLSX.utils.encode_cell({ r, c: item.c });
+            const old = ws[addr] || {};
+            ws[addr] = { ...old, t: 's', v: item.v };
+        }
+        filled.push(`${item.name}=${item.v.length > 20 ? item.v.slice(0, 20) + '…' : item.v}`);
+    }
+    return filled;
+}
+
 // 画面统计：亮度、黑色像素占比、颜色数；截图含播放器控制条，黑屏时黑色占比仍会 > 90%
 async function imageStats(buffer) {
     const { data, info } = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
@@ -315,6 +364,51 @@ class MonitorReportFlow {
                 }
             };
         }).catch(() => ({ visible: false, statusText: '', tabFound: false, tabDisabled: false, diagnostics: null }));
+    }
+
+    // 读取弹窗第一个Tab【车辆信息】：速度、状态、通讯时间、位置
+    // 弹窗默认展示车辆信息Tab；轮询等待内容加载完成（车牌匹配且字段已出现）
+    async readVehicleInfo(frame, plate) {
+        let last = null;
+        for (let i = 0; i < 10; i++) {
+            const info = await frame.evaluate(() => {
+                const visible = (e) => {
+                    const r = e.getBoundingClientRect();
+                    return r.width > 2 && r.height > 2;
+                };
+                const detail = Array.from(document.querySelectorAll('.car-detail')).find(visible);
+                if (!detail) return null;
+                const text = String(detail.innerText || '');
+                if (!text) return null;
+
+                const plateM = text.match(/车\s*牌\s*号\s*[:：]\s*([^\s]+)/);
+                // 速度：如“速度：77公里/小时”，只取数字
+                const speedM = text.match(/速\s*度\s*[:：]\s*(\d+(?:\.\d+)?)\s*(?:公\s*里|km|KM)?/);
+                const statusM = text.match(/车\s*牌\s*号\s*[:：][\s\S]{0,150}?状\s*态\s*[:：]\s*([^\s]+)/)
+                    || text.match(/状\s*态\s*[:：]\s*([^\s]+)/);
+                // 通讯时间：如“2026-10-27 10:32:56”，只取时:分
+                const timeM = text.match(/通讯时间\s*[:：]\s*([^\n\r]{1,40})/);
+                const commTime = timeM ? ((timeM[1].match(/(\d{1,2}:\d{2})/) || [])[1] || '') : '';
+                // 位置较长时会折行，合并后续不以“标签：”开头的行，遇到下一个字段标签为止
+                const posM = text.match(/位\s*置\s*[:：]\s*[^\n\r]+(?:\r?\n\s*(?![\u4e00-\u9fa5A-Za-z]{1,8}\s*[:：])[^\n\r]+)*/);
+                const position = posM ? posM[0].replace(/^[^:：]*[:：]\s*/, '').replace(/\s*\r?\n\s*/g, '').trim() : '';
+                return {
+                    plate: plateM ? plateM[1] : '',
+                    speed: speedM ? speedM[1] : '',
+                    status: statusM ? statusM[1] : '',
+                    commTime,
+                    position
+                };
+            }).catch(() => null);
+            if (info) {
+                last = info;
+                // 弹窗车牌必须匹配当前车，避免读到上一辆车残留信息
+                const plateOk = !info.plate || !plate || norm(info.plate) === norm(plate);
+                if (plateOk && (info.speed || info.commTime || info.status)) return info;
+            }
+            await sleep(500);
+        }
+        return last;
     }
 
     // 点击视频点播 Tab，返回底部“视频点播”按钮状态
@@ -766,6 +860,13 @@ class MonitorReportFlow {
         const selected = await this.searchAndSelect(frame, plate);
         if (selected.status !== 'selected') return selected;
 
+        // 弹窗默认展示第一个Tab【车辆信息】，先读取速度/状态/通讯时间/位置用于回填
+        const info = await this.readVehicleInfo(frame, plate);
+        if (info) {
+            const brief = `速度${info.speed || '未知'}，状态${info.status || '未知'}，通讯时间${info.commTime || '未知'}`;
+            this.log(`  车辆信息：${brief}${info.position ? `，位置：${info.position.slice(0, 30)}` : ''}`);
+        }
+
         let demand = await this.openVideoTab(frame, plate);
         if (!demand.found) {
             // 可能第一次点击未生效，重试一次
@@ -775,15 +876,15 @@ class MonitorReportFlow {
         if (!demand.found) {
             if (demand.diagnostics) this.log('  未找到底部视频点播按钮，页面诊断：' + JSON.stringify(demand.diagnostics));
             await this.backToMonitor(page, frame);
-            return { status: 'failed', detail: `未找到底部视频点播按钮（车辆状态：${demand.statusText || '未知'}）` };
+            return { status: 'failed', detail: `未找到底部视频点播按钮（车辆状态：${demand.statusText || '未知'}）`, info };
         }
         if (demand.disabled) {
             if (demand.diagnostics) this.log('  视频点播不可用，页面诊断：' + JSON.stringify(demand.diagnostics));
             await this.backToMonitor(page, frame);
             if (/^离线/.test(demand.statusText || '')) {
-                return { status: 'offline', detail: '车辆离线，视频点播不可用' };
+                return { status: 'offline', detail: '车辆离线，视频点播不可用', info };
             }
-            return { status: 'failed', detail: `视频点播按钮不可用（车辆状态：${demand.statusText || '未知'}）` };
+            return { status: 'failed', detail: `视频点播按钮不可用（车辆状态：${demand.statusText || '未知'}）`, info };
         }
 
         await this.selectAllChannels(frame);
@@ -802,7 +903,7 @@ class MonitorReportFlow {
 
         if (!(await this.clickStart(frame))) {
             await this.backToMonitor(page, frame);
-            return { status: 'failed', detail: '未找到开始点播按钮' };
+            return { status: 'failed', detail: '未找到开始点播按钮', info };
         }
 
         // 等视频元素创建；若先出现视频流报错则不必继续等
@@ -827,7 +928,7 @@ class MonitorReportFlow {
         const { states, errors } = waitRes;
         if (!states.length && !errors.length) {
             await this.backToMonitor(page, frame);
-            return { status: 'failed', detail: '点播后未出现视频通道' };
+            return { status: 'failed', detail: '点播后未出现视频通道', info };
         }
 
         await sleep(2000);
@@ -844,7 +945,12 @@ class MonitorReportFlow {
         const blackChannels = await this.analyzeChannels(frame, latestStates, channelNames, latestErrors);
         await this.backToMonitor(page, frame);
 
-        return { status: 'done', blackChannels, detail: blackChannels.length ? `黑屏：${blackChannels.join('、')}` : '全部有画面' };
+        return {
+            status: 'done',
+            blackChannels,
+            detail: blackChannels.length ? `黑屏：${blackChannels.join('、')}` : '全部有画面',
+            info
+        };
     }
 
     async run(filePath) {
@@ -898,6 +1004,12 @@ class MonitorReportFlow {
                     this.log(`  处理失败：${result.detail || '未知错误'}`);
                 }
 
+                // 回填车辆信息（速度/车辆状态/监控时段/车辆地理位置），离线、失败车辆也回填
+                if (result.info) {
+                    const filled = fillVehicleInfo(wb, parsed, rowIndexes, result.info);
+                    if (filled.length) this.log(`  已回填车辆信息：${filled.join('，')}`);
+                }
+
                 this.onProgress({
                     rowIndexes,
                     status: result.status,
@@ -916,4 +1028,4 @@ class MonitorReportFlow {
     }
 }
 
-module.exports = { readMonitorReport, outputPathFor, MonitorReportFlow, CHANNEL_COLUMN };
+module.exports = { readMonitorReport, outputPathFor, MonitorReportFlow, CHANNEL_COLUMN, fillVehicleInfo };
