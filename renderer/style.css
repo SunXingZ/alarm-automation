@@ -725,15 +725,10 @@ body {
     display: none;
 }
 
-/* 监控报表状态：待处理 / 离线 / 未找到 */
+/* 监控报表状态：待处理 / 未找到 */
 .status-waiting {
     background: #eef1f5;
     color: #8892a0;
-}
-
-.status-offline {
-    background: #fff6e6;
-    color: #d98a2b;
 }
 
 .status-notfound {

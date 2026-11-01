@@ -523,13 +523,12 @@ const MONITOR_STATUS_TEXT = {
     waiting: '待处理',
     processing: '处理中',
     done: '完成',
-    offline: '车辆离线',
     notfound: '未找到车辆',
     failed: '失败'
 };
 
 let monitorFilePath = '';
-let monitorRows = [];              // { rowIndex, plate, line, status, detail, blackChannels }
+let monitorRows = [];              // { rowIndex, plate, line, status, detail }
 let monitorRowMap = new Map();     // rowIndex -> tr
 let monitorRunning = false;
 
@@ -543,11 +542,9 @@ const setMonitorStatus = (text, cls) => {
 };
 
 function monitorDetailText(row) {
-    if (row.status === 'done') {
-        return row.blackChannels && row.blackChannels.length ? row.blackChannels.join('、') : '全部有画面';
-    }
+    if (row.status === 'done') return row.detail || '已回填车辆信息';
     if (row.status === 'failed') return row.detail || '失败';
-    if (row.status === 'offline' || row.status === 'notfound') return row.detail || '-';
+    if (row.status === 'notfound') return row.detail || '-';
     return row.status === 'processing' ? '处理中' : '-';
 }
 
@@ -569,12 +566,10 @@ function updateMonitorSummary() {
         return;
     }
     const done = monitorRows.filter(r => r.status === 'done').length;
-    const offline = monitorRows.filter(r => r.status === 'offline' || r.status === 'notfound').length;
+    const notfound = monitorRows.filter(r => r.status === 'notfound').length;
     const fail = monitorRows.filter(r => r.status === 'failed').length;
-    const black = monitorRows.filter(r => r.status === 'done' && r.blackChannels && r.blackChannels.length).length;
     let text = `共 ${monitorRows.length} 行 · 完成 ${done}`;
-    if (black) text += ` · 黑屏 ${black}`;
-    if (offline) text += ` · 离线/未找到 ${offline}`;
+    if (notfound) text += ` · 未找到 ${notfound}`;
     if (fail) text += ` · 失败 ${fail}`;
     monitorSummary.textContent = text;
 }
@@ -605,7 +600,6 @@ window.electronAPI.onMonitorProgress((p) => {
         if (!row) continue;
         row.status = p.status || row.status;
         row.detail = p.detail || '';
-        row.blackChannels = p.blackChannels || [];
         updateMonitorRow(row);
     }
     updateMonitorSummary();
@@ -631,7 +625,7 @@ monitorFileInput.addEventListener('change', async () => {
         return;
     }
 
-    monitorRows = res.rows.map(r => ({ ...r, status: 'waiting', detail: '', blackChannels: [] }));
+    monitorRows = res.rows.map(r => ({ ...r, status: 'waiting', detail: '' }));
     renderMonitorRows();
     updateMonitorSummary();
     setMonitorStatus('已导入', 'done');
@@ -649,7 +643,7 @@ monitorStartBtn.addEventListener('click', async () => {
     monitorStartBtn.querySelector('.btn-text').textContent = '处理中...';
     monitorLogOutput.innerHTML = '';
     setMonitorStatus('运行中', 'running');
-    monitorRows.forEach(r => { r.status = 'waiting'; r.detail = ''; r.blackChannels = []; });
+    monitorRows.forEach(r => { r.status = 'waiting'; r.detail = ''; });
     renderMonitorRows();
     updateMonitorSummary();
 

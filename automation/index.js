@@ -311,6 +311,14 @@ async function runAutomation(options = {}, log = console.log) {
                         chosen, order.plate, parsed.header, parsed.headerStyles, parsed.widths, outPath, tmpDir
                     );
                     log(`换脸 ${ch.old.time}(旧) ~ ${ch.new.time}(新)：共 ${stops.length} 个停靠段，取${reason}的 1 个 -> 保存 ${outPath}（${chosen.rows.length} 行）`);
+                    // 与拼图同名的 txt：记录该停靠段表格首行与末行的时间（两行，开始/结束）
+                    try {
+                        const startT = chosen.rows[0].timeStr;
+                        const endT = chosen.rows[chosen.rows.length - 1].timeStr;
+                        fs.writeFileSync(outPath.replace(/\.jpg$/i, '.txt'), `${startT}\n${endT}\n`, 'utf8');
+                    } catch (e) {
+                        log(`停靠时间 txt 写入失败: ${e.message}`);
+                    }
                 } catch (err) {
                     log(`停靠段拼图失败: ${err.message}`);
                 }

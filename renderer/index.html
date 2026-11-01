@@ -199,7 +199,7 @@
             <div class="header-icon">📹</div>
             <div>
                 <h1>处理监控报表</h1>
-                <p class="subtitle">导入 GPS 监控日报表，逐车进入平台视频点播，自动判断各通道是否黑屏无画面并在对应列打勾</p>
+                <p class="subtitle">导入 GPS 监控日报表，逐车进入平台车辆监控，自动读取车辆信息并回填到表格</p>
             </div>
         </header>
 
@@ -215,7 +215,7 @@
                         <button type="button" id="monitor-file-pick" class="secondary-btn">选择文件…</button>
                         <span id="monitor-file-name" class="file-name">未选择</span>
                     </div>
-                    <small class="filter-tip">表头需包含：车辆牌号、前方位、驾驶座、前车厢、上客门。黑屏无画面的通道会在对应列打勾（√），结果另存为“原文件名_已处理”。</small>
+                    <small class="filter-tip">表头需包含：车辆牌号。会自动回填速度、车辆状态、监控时段、车辆地理位置，结果另存为“原文件名_已处理”。</small>
                 </div>
             </div>
 
@@ -231,7 +231,7 @@
                                 <th>线路</th>
                                 <th>车牌号</th>
                                 <th>状态</th>
-                                <th>黑屏通道</th>
+                                <th>回填信息</th>
                             </tr>
                         </thead>
                         <tbody id="monitor-result-body">

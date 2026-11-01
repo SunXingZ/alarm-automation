@@ -154,7 +154,7 @@ ipcMain.handle('parse-monitor-report', async (event, filePath) => {
     }
 });
 
-// 处理监控报表：逐车视频点播并回填黑屏勾选，结果另存为副本
+// 处理监控报表：逐车读取车辆信息并回填到表格，结果另存为副本
 ipcMain.handle('process-monitor-report', async (event, payload) => {
     const log = (message) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
